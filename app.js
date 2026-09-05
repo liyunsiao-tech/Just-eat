@@ -1,25 +1,36 @@
 import {
   deriveTags,
+  extractNeedConstraints,
   filterCandidatesByNeed,
   filterCandidatesBySettings,
   pickWeighted,
-  sanitizeCandidate,
   sanitizeCandidates,
   toAiCandidate,
 } from "./src/decision.mjs";
+import { buildTextSearchRequest, normalizeNewPlace } from "./src/places.mjs";
 import {
   compactInteraction,
   compactProfile,
   clearLocalTasteData,
   getInteractions,
+  getActiveBlacklistPlaceIds,
   getSettings,
   getTasteProfile,
   saveInteraction,
   saveSettings,
 } from "./src/storage.mjs";
 
+function autoMeal() {
+  const hour = new Date().getHours();
+  if (hour < 10) return "breakfast";
+  if (hour < 14) return "lunch";
+  if (hour < 17) return "dessert";
+  if (hour < 22) return "dinner";
+  return "latenight";
+}
+
 const DEFAULT_SETTINGS = Object.freeze({
-  meal: "dinner",
+  meal: autoMeal(),
   radiusKm: 3,
   category: "all",
   openNow: true,
@@ -58,6 +69,8 @@ const MEAL_KEYWORDS = Object.freeze({
 const dom = {
   form: document.querySelector("#decision-form"),
   mood: document.querySelector("#current-need"),
+  needHint: document.querySelector("#need-hint"),
+  advancedFilters: document.querySelector("#advanced-filters"),
   meal: document.querySelector("#meal"),
   radius: document.querySelector("#radius"),
   price: document.querySelector("#price"),
@@ -76,17 +89,25 @@ const dom = {
   resultTitle: document.querySelector("#result-title"),
   resultMeta: document.querySelector("#result-meta"),
   resultReason: document.querySelector("#result-reason"),
+  resultLimits: document.querySelector("#result-limits"),
   resultFooter: document.querySelector("#result-footer"),
   resultSource: document.querySelector("#result-source"),
   resultLink: document.querySelector("#result-link"),
   resultActions: document.querySelector("#result-actions"),
   candidateDetails: document.querySelector("#candidate-details"),
   candidateList: document.querySelector("#candidate-list"),
+  resultOrbit: document.querySelector("#result-orbit"),
+  resultPhoto: document.querySelector("#result-photo"),
+  resultPhotoImage: document.querySelector("#result-photo-image"),
+  photoAttribution: document.querySelector("#photo-attribution"),
   tasteBars: document.querySelector("#taste-bars"),
   interactionCount: document.querySelector("#interaction-count"),
   profileSignal: document.querySelector("#profile-signal"),
   recentList: document.querySelector("#recent-list"),
   historyList: document.querySelector("#history-list"),
+  memoryCollections: document.querySelector("#memory-collections"),
+  favoriteList: document.querySelector("#favorite-list"),
+  blacklistList: document.querySelector("#blacklist-list"),
   clearMemory: document.querySelector("#clear-memory"),
   liveRegion: document.querySelector("#live-region"),
 };
@@ -101,6 +122,8 @@ const state = {
   seenIds: new Set(),
   busy: false,
   mapsScriptPromise: null,
+  currentNeed: "",
+  currentEventActions: new Set(),
 };
 
 const actionLabels = Object.freeze({
@@ -108,7 +131,9 @@ const actionLabels = Object.freeze({
   accepted: "吃這家",
   rerolled: "換一家",
   favorited: "收藏",
+  unfavorited: "取消收藏",
   blacklisted: "封鎖",
+  unblacklisted: "恢復封鎖",
 });
 
 const tagLabels = Object.freeze({
@@ -167,6 +192,12 @@ function updateServiceStatus() {
   } else {
     setText(dom.serviceStatus, "示範模式；設定 Places key 後搜尋附近真實餐廳");
   }
+  setText(
+    dom.needHint,
+    state.config.aiAvailable
+      ? "有特別想法再說就好；不輸入也可以直接幫你決定。吃膩了、想換口味或有例外條件，也可以直接寫。"
+      : "不輸入也可以直接決定；目前一般推薦模式只會保守處理簡單文字需求。",
+  );
 }
 
 async function loadConfig() {
@@ -212,7 +243,7 @@ function requestLocation() {
 
 async function ensureMapsScript() {
   if (!state.config.mapsBrowserKey) throw new Error("maps_key_missing");
-  if (window.google?.maps?.places) return window.google;
+  if (window.google?.maps?.importLibrary) return window.google;
   if (state.mapsScriptPromise) return state.mapsScriptPromise;
 
   state.mapsScriptPromise = new Promise((resolve, reject) => {
@@ -228,80 +259,22 @@ async function ensureMapsScript() {
   return state.mapsScriptPromise;
 }
 
-function distanceInKm(left, right) {
-  const toRadians = (value) => value * Math.PI / 180;
-  const earthRadius = 6371;
-  const dLat = toRadians(right.lat - left.lat);
-  const dLng = toRadians(right.lng - left.lng);
-  const a = Math.sin(dLat / 2) ** 2
-    + Math.cos(toRadians(left.lat)) * Math.cos(toRadians(right.lat)) * Math.sin(dLng / 2) ** 2;
-  return earthRadius * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
-
-function normalizeGooglePlace(place) {
-  const placeLocation = place.geometry?.location;
-  const placeLat = typeof placeLocation?.lat === "function" ? placeLocation.lat() : placeLocation?.lat;
-  const placeLng = typeof placeLocation?.lng === "function" ? placeLocation.lng() : placeLocation?.lng;
-  const hasDestination = Number.isFinite(Number(placeLat)) && Number.isFinite(Number(placeLng));
-  const mapsUrl = state.location && hasDestination
-    ? `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(`${state.location.lat},${state.location.lng}`)}&destination=${encodeURIComponent(`${placeLat},${placeLng}`)}&destination_place_id=${encodeURIComponent(place.place_id || "")}`
-    : `https://www.google.com/maps/search/?api=1&query=Google&query_place_id=${encodeURIComponent(place.place_id || "")}`;
-  const candidate = sanitizeCandidate({
-    placeId: place.place_id,
-    name: place.name,
-    address: place.vicinity || place.formatted_address,
-    rating: place.rating,
-    userRatingsTotal: place.user_ratings_total,
-    priceLevel: place.price_level,
-    isOpen: place.opening_hours?.open_now === true,
-    categories: place.types,
-    tags: deriveTags({ name: place.name, types: place.types }),
-    source: "google",
-    mapsUrl,
-    distanceKm: state.location && place.geometry?.location
-      ? distanceInKm(state.location, {
-        lat: placeLat,
-        lng: placeLng,
-      })
-      : null,
-  });
-  return candidate;
-}
-
 async function queryGooglePlaces() {
   await ensureMapsScript();
-  const probe = document.createElement("div");
-  probe.className = "map-probe";
-  document.body.appendChild(probe);
-  try {
-    const map = new window.google.maps.Map(probe, {
-      center: state.location,
-      zoom: 14,
-      disableDefaultUI: true,
-    });
-    const service = new window.google.maps.places.PlacesService(map);
-    const request = {
-      location: new window.google.maps.LatLng(state.location.lat, state.location.lng),
-      radius: Math.min(10, Number(state.settings.radiusKm) || 3) * 1000,
-      type: "restaurant",
-    };
-    const mealKeyword = MEAL_KEYWORDS[state.settings.meal] || MEAL_KEYWORDS.dinner;
-    const categoryKeyword = CATEGORY_KEYWORDS[state.settings.category];
-    request.keyword = [mealKeyword, categoryKeyword].filter(Boolean).join(" ");
-    if (state.settings.openNow) request.openNow = true;
-
-    return await new Promise((resolve, reject) => {
-      service.nearbySearch(request, (results, status) => {
-        if (status === "OK" || status === "ZERO_RESULTS") {
-          resolve((results || []).map(normalizeGooglePlace).filter(Boolean));
-        } else {
-          reject(new Error("places_query_failed"));
-        }
-      });
-    });
-  } finally {
-    probe.remove();
-  }
+  const { Place } = await window.google.maps.importLibrary("places");
+  if (typeof Place?.searchByText !== "function") throw new Error("places_new_api_unavailable");
+  const radiusKm = Math.min(10, Math.max(1, Number(state.settings.radiusKm) || 3));
+  const request = buildTextSearchRequest({
+    origin: state.location,
+    radiusKm,
+    mealKeyword: MEAL_KEYWORDS[state.settings.meal] || MEAL_KEYWORDS.dinner,
+    categoryKeyword: CATEGORY_KEYWORDS[state.settings.category],
+    openNow: state.settings.openNow,
+  });
+  const { places = [] } = await Place.searchByText(request);
+  return places
+    .map((place) => normalizeNewPlace(place, { origin: state.location, openNow: state.settings.openNow }))
+    .filter((candidate) => candidate && candidate.distanceKm !== null && candidate.distanceKm <= radiusKm + 0.001);
 }
 
 async function loadCandidates() {
@@ -336,13 +309,10 @@ function categoryMatches(candidate) {
 
 function applyFormFilters(candidates, currentNeed) {
   const bySettings = filterCandidatesBySettings(candidates, state.settings).filter(categoryMatches);
-  const blockedPlaceIds = new Set(
-    getInteractions()
-      .filter((interaction) => interaction.action === "blacklisted")
-      .map((interaction) => interaction.placeId),
-  );
-  const byPrice = bySettings.filter((candidate) => !blockedPlaceIds.has(candidate.placeId));
-  return filterCandidatesByNeed(byPrice, currentNeed);
+  const blockedPlaceIds = new Set(getActiveBlacklistPlaceIds(getInteractions()));
+  const structuredCandidates = bySettings.filter((candidate) => !blockedPlaceIds.has(candidate.placeId));
+  const shouldUseFallbackHardFilters = state.source === "demo" || !state.config.aiAvailable;
+  return shouldUseFallbackHardFilters ? filterCandidatesByNeed(structuredCandidates, currentNeed) : structuredCandidates;
 }
 
 function getDisplayedCandidates(currentNeed) {
@@ -370,6 +340,56 @@ function formatMeta(candidate) {
   return parts.join("　");
 }
 
+function resetResultPhoto() {
+  if (dom.resultPhoto) dom.resultPhoto.hidden = true;
+  if (dom.resultOrbit) dom.resultOrbit.hidden = false;
+  if (dom.resultPhotoImage) {
+    dom.resultPhotoImage.onerror = null;
+    dom.resultPhotoImage.removeAttribute("src");
+  }
+  if (dom.photoAttribution) {
+    dom.photoAttribution.replaceChildren();
+    dom.photoAttribution.hidden = true;
+  }
+}
+
+function renderPhotoAttribution(attributions = []) {
+  if (!dom.photoAttribution) return;
+  dom.photoAttribution.replaceChildren();
+  const safeAttributions = (Array.isArray(attributions) ? attributions : [])
+    .filter((item) => item && typeof item === "object")
+    .slice(0, 3);
+  safeAttributions.forEach((attribution, index) => {
+    if (index) dom.photoAttribution.append(document.createTextNode(" · "));
+    const displayName = typeof attribution.displayName === "string" ? attribution.displayName : "";
+    const uri = typeof attribution.uri === "string" && /^https:\/\//i.test(attribution.uri)
+      ? attribution.uri
+      : "";
+    if (uri) {
+      const link = document.createElement("a");
+      link.href = uri;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      link.textContent = displayName || "照片作者";
+      dom.photoAttribution.append(link);
+    } else if (displayName) {
+      dom.photoAttribution.append(document.createTextNode(displayName));
+    }
+  });
+  dom.photoAttribution.hidden = !dom.photoAttribution.textContent?.trim();
+}
+
+function renderResultPhoto(candidate) {
+  resetResultPhoto();
+  if (!candidate.photoUrl || !dom.resultPhoto || !dom.resultPhotoImage) return;
+  dom.resultPhoto.hidden = false;
+  dom.resultOrbit.hidden = true;
+  renderPhotoAttribution(candidate.photoAttributions);
+  dom.resultPhotoImage.alt = `${candidate.name} 餐廳照片`;
+  dom.resultPhotoImage.onerror = () => resetResultPhoto();
+  dom.resultPhotoImage.src = candidate.photoUrl;
+}
+
 function renderCandidateDetails(candidates) {
   dom.candidateList.replaceChildren();
   const list = sanitizeCandidates(candidates);
@@ -393,14 +413,18 @@ function renderCandidateDetails(candidates) {
 }
 
 function renderEmptyResult(message = "設定條件後按下「幫我決定」") {
+  state.currentEventActions.clear();
   dom.resultPanel.classList.add("is-empty");
   dom.resultActions.hidden = true;
   dom.resultFooter.hidden = true;
   dom.candidateDetails.hidden = true;
+  resetResultPhoto();
+  renderNeedLimits([]);
   const favoriteButton = dom.resultActions.querySelector('[data-action="favorited"]');
   if (favoriteButton) {
     favoriteButton.textContent = "♡";
     favoriteButton.setAttribute("aria-label", "收藏這家餐廳");
+    favoriteButton.setAttribute("title", "收藏");
   }
   setText(dom.resultKicker, "READY WHEN YOU ARE");
   setText(dom.resultMode, "等待決定");
@@ -410,22 +434,19 @@ function renderEmptyResult(message = "設定條件後按下「幫我決定」") 
   setText(dom.resultReason, "你可以不輸入任何需求；原本的加權隨機流程隨時都能工作。");
 }
 
-function renderResult(candidate, mode, reason) {
+function renderResult(candidate, mode, reason, unsupportedNeeds = []) {
   dom.resultPanel.classList.remove("is-empty");
   dom.resultActions.hidden = false;
   dom.resultFooter.hidden = false;
-  const favoriteButton = dom.resultActions.querySelector('[data-action="favorited"]');
-  if (favoriteButton) {
-    favoriteButton.textContent = "♡";
-    favoriteButton.setAttribute("aria-label", "收藏這家餐廳");
-  }
-  setText(dom.resultKicker, mode === "ai" ? "A LITTLE MORE LIKE YOU" : "LET THE WEIGHTS DECIDE");
+  setText(dom.resultKicker, mode === "ai" ? "今天就吃這家" : "LET THE WEIGHTS DECIDE");
   setText(dom.resultMode, modeLabel(mode));
-  setText(dom.resultOverline, state.source === "google" ? "附近的這一家" : "先用示範候選試轉一圈");
+  setText(dom.resultOverline, state.source === "google" ? "你的下一口" : "先用示範候選試轉一圈");
   setText(dom.resultTitle, candidate.name);
   setText(dom.resultMeta, formatMeta(candidate));
   setText(dom.resultReason, reason);
+  renderNeedLimits(unsupportedNeeds);
   setText(dom.resultSource, candidate.source === "google" ? "候選來自 Google Places" : "目前是示範候選；設定 key 後會切換至真實附近餐廳");
+  renderResultPhoto(candidate);
   renderCandidateDetails(getDisplayedCandidates(dom.mood.value.trim().slice(0, 240)));
   if (candidate.mapsUrl) {
     dom.resultLink.hidden = false;
@@ -433,17 +454,103 @@ function renderResult(candidate, mode, reason) {
   } else {
     dom.resultLink.hidden = true;
   }
+  setResultActionState();
   announce(`已選出 ${candidate.name}`);
+}
+
+function renderNeedLimits(unsupportedNeeds = []) {
+  if (!dom.resultLimits) return;
+  const notes = [...new Set((Array.isArray(unsupportedNeeds) ? unsupportedNeeds : [])
+    .map((value) => String(value).trim())
+    .filter(Boolean))].slice(0, 3);
+  dom.resultLimits.hidden = !notes.length;
+  setText(dom.resultLimits, notes.length ? `資料提醒：${notes.join("；")}` : "");
 }
 
 function formatTag(key) {
   return tagLabels[key] || key;
 }
 
+function isFavoritePlace(placeId) {
+  return getTasteProfile().favoritePlaceIds?.includes(placeId) === true;
+}
+
+function getPlaceSnapshots(interactions) {
+  const snapshots = new Map();
+  for (const interaction of interactions) snapshots.set(interaction.placeId, interaction);
+  return snapshots;
+}
+
+function renderMemoryCollectionList(listElement, snapshots, placeIds, action, buttonLabel, emptyText) {
+  if (!listElement) return;
+  listElement.replaceChildren();
+  if (!placeIds.length) {
+    const empty = document.createElement("li");
+    empty.className = "recent-empty";
+    empty.textContent = emptyText;
+    listElement.append(empty);
+    return;
+  }
+  for (const placeId of placeIds) {
+    const snapshot = snapshots.get(placeId);
+    const item = document.createElement("li");
+    item.className = "memory-item";
+    const name = document.createElement("span");
+    name.textContent = snapshot?.placeName || placeId;
+    const button = document.createElement("button");
+    button.className = "text-button memory-action";
+    button.type = "button";
+    button.dataset.memoryAction = action;
+    button.dataset.placeId = placeId;
+    button.textContent = buttonLabel;
+    item.append(name, button);
+    listElement.append(item);
+  }
+}
+
+function renderMemoryCollections(interactions, profile) {
+  const snapshots = getPlaceSnapshots(interactions);
+  renderMemoryCollectionList(
+    dom.favoriteList,
+    snapshots,
+    Array.isArray(profile.favoritePlaceIds) ? profile.favoritePlaceIds : [],
+    "unfavorite",
+    "取消收藏",
+    "目前沒有收藏。",
+  );
+  renderMemoryCollectionList(
+    dom.blacklistList,
+    snapshots,
+    getActiveBlacklistPlaceIds(interactions),
+    "unblacklist",
+    "恢復",
+    "目前沒有封鎖。",
+  );
+}
+
+function setResultActionState() {
+  if (!state.current) return;
+  const favoriteButton = dom.resultActions.querySelector('[data-action="favorited"]');
+  if (favoriteButton) {
+    const favorite = isFavoritePlace(state.current.placeId);
+    favoriteButton.textContent = favorite ? "♥" : "♡";
+    favoriteButton.setAttribute("aria-label", favorite ? "取消收藏這家餐廳" : "收藏這家餐廳");
+    favoriteButton.setAttribute("title", favorite ? "取消收藏" : "收藏");
+  }
+  const acceptedButton = dom.resultActions.querySelector('[data-action="accepted"]');
+  if (acceptedButton) {
+    const accepted = state.currentEventActions.has("accepted");
+    acceptedButton.disabled = accepted;
+    acceptedButton.setAttribute("aria-label", accepted ? "已決定這家餐廳" : "就吃這家餐廳");
+    const label = acceptedButton.querySelector(".accepted-label");
+    if (label) label.textContent = accepted ? "已決定" : "就吃這家";
+  }
+}
+
 function renderTasteProfile() {
   const interactions = getInteractions();
   const profile = getTasteProfile();
-  setText(dom.interactionCount, `${interactions.length} 次選擇`);
+  setText(dom.interactionCount, `${profile.interactionCount || 0} 次有效回饋`);
   dom.tasteBars.replaceChildren();
 
   const preferences = Array.isArray(profile.topPreferences) ? profile.topPreferences.slice(0, 4) : [];
@@ -475,10 +582,11 @@ function renderTasteProfile() {
   }
 
   const avoidCount = Array.isArray(profile.avoidPreferences) ? profile.avoidPreferences.length : 0;
-  setText(dom.profileSignal, interactions.length ? (avoidCount ? `${avoidCount} 個避開訊號` : "輪廓正在成形") : "等待第一個訊號");
+  setText(dom.profileSignal, profile.interactionCount ? (avoidCount ? `${avoidCount} 個避開訊號` : "輪廓正在成形") : "等待第一個訊號");
   const recent = interactions.slice(-4).reverse();
   renderInteractionList(dom.recentList, recent, "看見、接受、換一家、收藏或封鎖，都是訊號。");
   renderInteractionList(dom.historyList, interactions.slice().reverse(), "目前還沒有互動紀錄。");
+  renderMemoryCollections(interactions, profile);
 }
 
 function renderInteractionList(listElement, interactions, emptyText) {
@@ -499,7 +607,10 @@ function renderInteractionList(listElement, interactions, emptyText) {
 }
 
 function recordCurrentAction(action) {
-  if (!state.current) return;
+  if (!state.current || state.currentEventActions.has(action)) return false;
+  if (action === "favorited") state.currentEventActions.delete("unfavorited");
+  if (action === "unfavorited") state.currentEventActions.delete("favorited");
+  state.currentEventActions.add(action);
   saveInteraction({
     action,
     placeId: state.current.placeId,
@@ -507,8 +618,28 @@ function recordCurrentAction(action) {
     categories: state.current.categories,
     tags: state.current.tags,
     priceLevel: state.current.priceLevel,
+    currentNeed: state.currentNeed,
+    meal: state.settings.meal,
   });
   renderTasteProfile();
+  setResultActionState();
+  return true;
+}
+
+function recordPlaceAction(action, interaction) {
+  if (!interaction?.placeId) return;
+  saveInteraction({
+    action,
+    placeId: interaction.placeId,
+    placeName: interaction.placeName,
+    categories: interaction.categories,
+    tags: interaction.tags,
+    priceLevel: interaction.priceLevel,
+    currentNeed: state.currentNeed,
+    meal: state.settings.meal,
+  });
+  renderTasteProfile();
+  setResultActionState();
 }
 
 async function requestRecommendation(candidates, currentNeed) {
@@ -541,6 +672,7 @@ async function decide({ reuseCandidates = false } = {}) {
   setBusy(true);
   state.settings = readSettingsFromForm();
   const currentNeed = dom.mood.value.trim().slice(0, 240);
+  state.currentNeed = currentNeed;
   if (!reuseCandidates) state.seenIds.clear();
 
   try {
@@ -559,6 +691,7 @@ async function decide({ reuseCandidates = false } = {}) {
     let selected = null;
     let mode = "fallback";
     let reason = "依照目前條件與你的本機口味輪廓，用加權隨機幫你決定。";
+    let unsupportedNeeds = extractNeedConstraints(currentNeed).unsupportedNeeds;
 
     if (state.source === "google") {
       try {
@@ -567,6 +700,7 @@ async function decide({ reuseCandidates = false } = {}) {
         if (selected) {
           mode = aiResult.mode === "ai" ? "ai" : "fallback";
           reason = aiResult.reason || reason;
+          unsupportedNeeds = Array.isArray(aiResult.unsupportedNeeds) ? aiResult.unsupportedNeeds : unsupportedNeeds;
         }
       } catch {
         // A network, timeout, or malformed response never blocks the base flow.
@@ -588,8 +722,9 @@ async function decide({ reuseCandidates = false } = {}) {
     }
     state.current = selected;
     state.seenIds.add(selected.placeId);
+    state.currentEventActions = new Set();
     recordCurrentAction("shown");
-    renderResult(selected, mode, reason);
+    renderResult(selected, mode, reason, unsupportedNeeds);
   } finally {
     setBusy(false);
   }
@@ -598,30 +733,26 @@ async function decide({ reuseCandidates = false } = {}) {
 async function handleResultAction(action) {
   if (!state.current || state.busy) return;
   if (action === "accepted") {
-    recordCurrentAction("accepted");
+    if (!recordCurrentAction("accepted")) return;
     announce(`已記下你選擇 ${state.current.name}`);
     setText(dom.resultReason, "記下了。下次決定時，這個訊號會讓類似口味更容易出現。");
     return;
   }
   if (action === "favorited") {
-    recordCurrentAction("favorited");
-    const favoriteButton = dom.resultActions.querySelector('[data-action="favorited"]');
-    if (favoriteButton) {
-      favoriteButton.textContent = "♥";
-      favoriteButton.setAttribute("aria-label", "已收藏這家餐廳");
-    }
-    setText(dom.resultReason, "收藏訊號已記下；之後遇到相近情境會更偏向你的口袋名單。");
-    announce("已收藏這家餐廳");
+    const wasFavorite = isFavoritePlace(state.current.placeId);
+    if (!recordCurrentAction(wasFavorite ? "unfavorited" : "favorited")) return;
+    setText(dom.resultReason, wasFavorite ? "已取消收藏；之後仍可再次收藏。" : "收藏訊號已記下；之後遇到相近情境會更偏向你的口袋名單。");
+    announce(wasFavorite ? "已取消收藏" : "已收藏這家餐廳");
     return;
   }
   if (action === "blacklisted") {
-    recordCurrentAction("blacklisted");
+    if (!recordCurrentAction("blacklisted")) return;
     announce("已避開這家與相近口味，正在換一家");
     await decide({ reuseCandidates: true });
     return;
   }
   if (action === "rerolled") {
-    recordCurrentAction("rerolled");
+    if (!recordCurrentAction("rerolled")) return;
     announce("已記下你想換一家");
     await decide({ reuseCandidates: true });
   }
@@ -649,10 +780,27 @@ function wireEvents() {
     const button = event.target.closest("button[data-action]");
     if (button) handleResultAction(button.dataset.action);
   });
+  dom.memoryCollections.addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-memory-action][data-place-id]");
+    if (!button) return;
+    const interactions = getInteractions();
+    const snapshot = interactions.slice().reverse().find((item) => item.placeId === button.dataset.placeId);
+    const action = button.dataset.memoryAction === "unfavorite" ? "unfavorited" : "unblacklisted";
+    recordPlaceAction(action, snapshot || {
+      placeId: button.dataset.placeId,
+      placeName: button.dataset.placeId,
+      categories: [],
+      tags: [],
+      priceLevel: null,
+    });
+    announce(action === "unfavorited" ? "已取消收藏" : "已恢復這家餐廳");
+  });
   dom.clearMemory.addEventListener("click", () => {
     if (!clearLocalTasteData()) return;
     state.seenIds.clear();
+    state.currentEventActions.clear();
     renderTasteProfile();
+    setResultActionState();
     announce("已清除互動與口味輪廓");
   });
   [dom.meal, dom.radius, dom.price, dom.minRating, dom.openNow, dom.excludeChains].forEach((control) => {
@@ -675,6 +823,7 @@ async function init() {
   dom.openNow.checked = state.settings.openNow;
   dom.minRating.value = String(state.settings.minRating ?? 4);
   dom.excludeChains.checked = Boolean(state.settings.excludeChains);
+  if (dom.advancedFilters) dom.advancedFilters.open = false;
   dom.chips.forEach((chip) => {
     const active = (chip.dataset.category || "all") === state.settings.category;
     chip.classList.toggle("is-active", active);

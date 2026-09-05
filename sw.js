@@ -5,6 +5,7 @@ const SHELL = [
   "/styles.css",
   "/app.js",
   "/src/decision.mjs",
+  "/src/places.mjs",
   "/src/storage.mjs",
   "/manifest.webmanifest",
   "/icons/icon.svg",

@@ -8,7 +8,7 @@
 
 1. 設定餐期、搜尋範圍、預算與口味方向。
 2. 選填一句當下需求，例如「今天想吃熱的，不要麵」；明確排除條件優先於長期偏好。
-3. 允許瀏覽器定位後，使用 Google Places 取得附近真實餐廳候選。
+3. 允許瀏覽器定位後，使用 Google Places API (New) 的 `Place.searchByText()` 取得附近真實餐廳候選；搜尋結果再以 client-side 精確距離檢查落在所選半徑內。
 4. 若 AI 可用，server-side proxy 將當下需求、設定、Taste Profile、近期行為與候選清單送到 OpenAI-compatible chat completion endpoint。
 5. AI 只能回傳候選清單裡的 `placeId`；格式錯誤、未知 ID、timeout、HTTP 錯誤或未設定 AI 時，自動回到原本 weighted random。
 6. 每次候選呈現（`shown`）以及「吃這家」「換一家」「收藏」「不想吃這類」都會寫入本機 interactions，並重算 Taste Profile；`shown` 不會單獨增加或降低偏好分數。
@@ -26,7 +26,8 @@
        └─ POST /api/recommend
               │
               ├─ server 驗證與清理 payload
-              ├─ currentNeed hard constraints 過濾候選
+              ├─ structured filters／active blacklist 過濾候選
+              ├─ AI 可用時保留完整候選，由模型理解 currentNeed；不可用時採保守 parser
               ├─ OpenAI-compatible AI（API key 僅 server environment）
               └─ 失敗時 weighted random fallback
 ```
@@ -39,7 +40,7 @@
 | --- | --- | --- |
 | 前端 | HTML、CSS、Vanilla JavaScript ES modules | 低依賴的主要體驗 |
 | PWA | Web App Manifest、Service Worker | 可安裝與 shell cache；API 永遠走網路 |
-| 地點 | Google Maps JavaScript API + Places library | 取得當下附近真實餐廳 |
+| 地點 | Google Maps JavaScript API + Places API (New) | `Place.searchByText()` 取得當下附近真實餐廳 |
 | 個人化 | localStorage、可替換 OpenAI-compatible endpoint | 本機口味輪廓與候選選擇 |
 | 後端 | Node.js 20+ 原生 `http` server | 靜態檔案、runtime config、AI proxy |
 
@@ -60,21 +61,38 @@ npm start
 `GOOGLE_MAPS_BROWSER_KEY` 只從 server environment 在執行時傳給瀏覽器，不會出現在 source code、Git 或 README。因為它是 browser key，必須在 Google Cloud Console：
 
 - 設定 HTTP referrer restriction，只允許本機開發網址與正式網域，不要使用 unrestricted。
-- 只開啟需要的 Maps JavaScript API／Places API，並設定日／分鐘 quota 與 billing alert。
+- API restriction 只允許實際使用的 Maps JavaScript API 與 Places API (New)；若專案另列 legacy Places API，請依實際需求檢查，不要為了方便開放全部 API。
+- 設定日／分鐘 quota 與 usage／billing alert。
 - 本機與 production 使用不同 key；production key 不要放進 local repository。
+- 若舊 `roulette-eater` 的 browser key 曾公開，請在 Google Cloud Console 旋轉或撤銷，不要搬到 `eat`。
+
+目前只要求 Place ID、名稱、地址、位置、評分、評分數、價格、營業狀態、類型、Google Maps URI 與照片欄位，不使用 `fields: ["*"]`。照片 URI 只在目前頁面的 fresh candidate 記憶體中使用，不寫入 localStorage；顯示照片時一併顯示 Google Places 回傳的 photo author attribution。
 
 ### AI 設定
 
+正式部署目前採用 Groq 的 OpenAI-compatible API；本專案用原生 `fetch`，不安裝 Groq 或 OpenAI SDK。Groq 的 base URL 與 Chat Completions 路徑遵循其 OpenAI compatibility 介面。
+
 ```dotenv
-AI_BASE_URL=https://你的供應商/v1
+AI_BASE_URL=https://api.groq.com/openai/v1
+AI_MODEL=openai/gpt-oss-120b
 AI_API_KEY=只存在本機或部署平台的 server environment
-AI_MODEL=你帳戶可用的低成本低延遲模型
-AI_TIMEOUT_MS=4500
+AI_TIMEOUT_MS=5000
 ```
 
-AI adapter 使用一般 `/chat/completions` 介面，沒有把產品綁死在單一供應商或模型。優先選擇你目前帳戶可取得的免費額度／低成本模型；`AI_MODEL` 不設預設值，避免把過時或不存在的模型硬編進產品。若 provider 只提供 OpenAI-compatible base URL，直接替換 `AI_BASE_URL` 即可。
+AI adapter 使用一般 `/chat/completions` 介面；保留 `AI_BASE_URL`、`AI_MODEL` 與原生 fetch，之後仍可替換成其他 OpenAI-compatible provider。`AI_API_KEY` 只放在本機 `.env` 或部署平台的 server environment，不會放進前端、README、console log、browser response 或 Git。
 
-`AI_API_KEY`、`OPENAI_API_KEY` 與任何 provider secret 只會由 Node server 讀取；前端只看到 `aiAvailable: true/false`，不會取得 key。若 endpoint 不可用，server 與 client 都有 fallback，AI 掛掉不會影響「幫我決定」基本流程。
+每次按「幫我決定」最多發出一次 AI request；`shown`、`rerolled`、收藏、黑名單與背景流程不會另發 AI request。AI timeout、429、HTTP error、invalid JSON、未知 `placeId` 或 provider 不可用時，server 自動回到 weighted random。Groq Console 的 Data Controls／Zero Data Retention 若要使用，請在 provider console 另行設定；本專案不假設該設定已啟用。
+
+### Render Free Web Service
+
+目前部署目標是 Render Free Web Service，使用 Node runtime，不需要 Express、Next.js 或其他 framework。
+
+- Build Command：`npm install`
+- Start Command：`npm start`
+- Health Check Path：`/api/health`
+- Service 必須提供 `PORT`；server 會監聽 `0.0.0.0`，符合 Render Web Service 的對外綁定需求。
+- 在 Render Environment Variables 設定 `GOOGLE_MAPS_BROWSER_KEY`、`AI_BASE_URL`、`AI_MODEL`、`AI_API_KEY`、`AI_TIMEOUT_MS=5000`；不要把值寫回 repository。
+- 使用者互動與 Taste Profile 仍只存在 browser localStorage；Render 不使用檔案或 database 保存它們。
 
 ## 本機資料與隱私
 
@@ -100,7 +118,7 @@ npm run security:history    # commit 後掃描完整 Git history
 ## 限制與下一步
 
 - Google Places 必須有正確 referrer、API 啟用、quota 與定位權限；否則產品會清楚退回示範候選，不會假裝有附近真實資料。
-- 自然語言目前是 bounded constraint extraction（例如不要麵、素食、想吃熱食），AI 只負責在已過濾候選裡排序與說明；這是為了保證當下硬需求不被長期偏好覆蓋。
+- 自然語言是 free-form currentNeed：AI 可用時保留結構化篩選後的完整候選，交給模型理解否定、例外與暫時需求；AI 不可用時只對簡單、明確、無例外的排除（例如「不要麵」）採保守 hard filter，避免把複合語意誤刪。
 - localStorage 是單一裝置資料，沒有登入、同步與跨裝置 profile；這是刻意的隱私與 12 小時範圍取捨。
 - 後續可在不改變核心契約的前提下加入更完整的 Places 欄位、可解釋的 profile 編輯與部署平台 adapter。
 

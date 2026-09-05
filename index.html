@@ -39,9 +39,9 @@
             </div>
 
             <form id="decision-form">
-              <label class="field-label" for="current-need">今天想吃什麼？<span>選填</span></label>
-              <textarea id="current-need" name="currentNeed" rows="3" maxlength="240" placeholder="例如：今天想吃熱的，不要麵"></textarea>
-              <p class="field-hint">一句話就好；當下明確需求會優先於長期口味。</p>
+              <label class="field-label" for="current-need">今天想吃／不想吃什麼？<span>選填</span></label>
+              <textarea id="current-need" name="currentNeed" rows="3" maxlength="240" placeholder="例如：想吃熱的，不要麵，但烏龍麵可以"></textarea>
+              <p class="field-hint" id="need-hint">一句話就好；當下明確需求會優先於長期口味。</p>
 
               <div class="form-row">
                 <label class="field-label" for="meal">餐期</label>
@@ -54,66 +54,71 @@
                 </select>
               </div>
 
-              <div class="form-row">
-                <label class="field-label" for="radius">搜尋範圍</label>
-                <select id="radius" name="radiusKm">
-                  <option value="1">1 公里內</option>
-                  <option value="3" selected>3 公里內</option>
-                  <option value="5">5 公里內</option>
-                  <option value="10">10 公里內</option>
-                </select>
-              </div>
+              <details class="advanced-filters" id="advanced-filters">
+                <summary><span>更多條件</span><small>距離・預算・評分・分類</small></summary>
+                <div class="advanced-filter-content">
+                  <div class="form-row">
+                    <label class="field-label" for="radius">搜尋範圍</label>
+                    <select id="radius" name="radiusKm">
+                      <option value="1">1 公里內</option>
+                      <option value="3" selected>3 公里內</option>
+                      <option value="5">5 公里內</option>
+                      <option value="10">10 公里內</option>
+                    </select>
+                  </div>
 
-              <div class="form-row">
-                <label class="field-label" for="price">預算</label>
-                <select id="price" name="price">
-                  <option value="all" selected>不限</option>
-                  <option value="cheap">$ · 輕鬆吃</option>
-                  <option value="moderate">$$ · 剛剛好</option>
-                  <option value="expensive">$$$ · 想吃好一點</option>
-                </select>
-              </div>
+                  <div class="form-row">
+                    <label class="field-label" for="price">預算</label>
+                    <select id="price" name="price">
+                      <option value="all" selected>不限</option>
+                      <option value="cheap">$ · 輕鬆吃</option>
+                      <option value="moderate">$$ · 剛剛好</option>
+                      <option value="expensive">$$$ · 想吃好一點</option>
+                    </select>
+                  </div>
 
-              <div class="form-row">
-                <label class="field-label" for="min-rating">最低評分</label>
-                <select id="min-rating" name="minRating">
-                  <option value="0">不限</option>
-                  <option value="3.5">3.5 以上</option>
-                  <option value="4" selected>4.0 以上</option>
-                  <option value="4.3">4.3 以上</option>
-                  <option value="4.5">4.5 以上</option>
-                </select>
-              </div>
+                  <div class="form-row">
+                    <label class="field-label" for="min-rating">最低評分</label>
+                    <select id="min-rating" name="minRating">
+                      <option value="0">不限</option>
+                      <option value="3.5">3.5 以上</option>
+                      <option value="4" selected>4.0 以上</option>
+                      <option value="4.3">4.3 以上</option>
+                      <option value="4.5">4.5 以上</option>
+                    </select>
+                  </div>
 
-              <fieldset class="filter-fieldset">
-                <legend class="field-label">口味方向</legend>
-                <div class="chip-list" role="group" aria-label="口味方向">
-                  <button class="chip is-active" type="button" data-category="all" aria-pressed="true">不限</button>
-                  <button class="chip" type="button" data-category="taiwanese" aria-pressed="false">台式</button>
-                  <button class="chip" type="button" data-category="japanese" aria-pressed="false">日式</button>
-                  <button class="chip" type="button" data-category="korean" aria-pressed="false">韓式</button>
-                  <button class="chip" type="button" data-category="italian" aria-pressed="false">義式</button>
-                  <button class="chip" type="button" data-category="cafe" aria-pressed="false">咖啡甜點</button>
+                  <fieldset class="filter-fieldset">
+                    <legend class="field-label">口味方向</legend>
+                    <div class="chip-list" role="group" aria-label="口味方向">
+                      <button class="chip is-active" type="button" data-category="all" aria-pressed="true">不限</button>
+                      <button class="chip" type="button" data-category="taiwanese" aria-pressed="false">台式</button>
+                      <button class="chip" type="button" data-category="japanese" aria-pressed="false">日式</button>
+                      <button class="chip" type="button" data-category="korean" aria-pressed="false">韓式</button>
+                      <button class="chip" type="button" data-category="italian" aria-pressed="false">義式</button>
+                      <button class="chip" type="button" data-category="cafe" aria-pressed="false">咖啡甜點</button>
+                    </div>
+                  </fieldset>
+
+                  <label class="toggle-row" for="open-now">
+                    <span>
+                      <strong>只找現在營業中</strong>
+                      <small>Google Places 會即時篩選</small>
+                    </span>
+                    <input id="open-now" type="checkbox" checked />
+                    <span class="toggle-ui" aria-hidden="true"></span>
+                  </label>
+
+                  <label class="toggle-row compact-toggle" for="exclude-chains">
+                    <span>
+                      <strong>避開常見連鎖</strong>
+                      <small>保留一點發現新店的空間</small>
+                    </span>
+                    <input id="exclude-chains" type="checkbox" />
+                    <span class="toggle-ui" aria-hidden="true"></span>
+                  </label>
                 </div>
-              </fieldset>
-
-              <label class="toggle-row" for="open-now">
-                <span>
-                  <strong>只找現在營業中</strong>
-                  <small>Google Places 會即時篩選</small>
-                </span>
-                <input id="open-now" type="checkbox" checked />
-                <span class="toggle-ui" aria-hidden="true"></span>
-              </label>
-
-              <label class="toggle-row compact-toggle" for="exclude-chains">
-                <span>
-                  <strong>避開常見連鎖</strong>
-                  <small>保留一點發現新店的空間</small>
-                </span>
-                <input id="exclude-chains" type="checkbox" />
-                <span class="toggle-ui" aria-hidden="true"></span>
-              </label>
+              </details>
 
               <div class="location-row">
                 <div class="location-copy">
@@ -138,12 +143,19 @@
                 <span class="result-mode" id="result-mode">等待決定</span>
               </div>
               <div class="result-main">
-                <div class="result-orbit" aria-hidden="true"><span>✦</span></div>
+                <div class="result-visual">
+                  <div class="result-photo" id="result-photo" hidden>
+                    <img id="result-photo-image" width="960" height="720" loading="lazy" decoding="async" alt="" />
+                    <div class="photo-attribution" id="photo-attribution" hidden></div>
+                  </div>
+                  <div class="result-orbit" id="result-orbit" aria-hidden="true"><span>✦</span></div>
+                </div>
                 <div class="result-copy">
                   <p class="result-overline" id="result-overline">你的下一站</p>
                   <h2 id="result-title">讓今天的第一口，<br /><em>先不用自己想。</em></h2>
                   <p class="result-meta" id="result-meta">設定條件後按下「幫我決定」</p>
                   <p class="result-reason" id="result-reason">你可以不輸入任何需求；原本的加權隨機流程隨時都能工作。</p>
+                  <p class="result-limits" id="result-limits" hidden></p>
                 </div>
               </div>
               <div class="result-footer" id="result-footer" hidden>
@@ -158,7 +170,7 @@
                 <button class="secondary-button" type="button" data-action="rerolled">換一家</button>
                 <button class="icon-button" type="button" data-action="favorited" aria-label="收藏這家餐廳" title="收藏">♡</button>
                 <button class="icon-button danger" type="button" data-action="blacklisted" aria-label="不想再看到這類餐廳" title="不想吃這類">×</button>
-                <button class="primary-button compact" type="button" data-action="accepted">就吃這家 <span aria-hidden="true">→</span></button>
+                <button class="primary-button compact" type="button" data-action="accepted"><span class="accepted-label">就吃這家</span> <span aria-hidden="true">→</span></button>
               </div>
             </article>
 
@@ -187,6 +199,19 @@
               <details class="history-details" id="history-details">
                 <summary>查看完整互動紀錄</summary>
                 <ul class="recent-list history-list" id="history-list"></ul>
+              </details>
+              <details class="memory-collections" id="memory-collections">
+                <summary>收藏與封鎖</summary>
+                <div class="memory-columns">
+                  <section aria-labelledby="favorite-heading">
+                    <h3 class="memory-heading" id="favorite-heading">收藏</h3>
+                    <ul class="recent-list" id="favorite-list"></ul>
+                  </section>
+                  <section aria-labelledby="blacklist-heading">
+                    <h3 class="memory-heading" id="blacklist-heading">封鎖</h3>
+                    <ul class="recent-list" id="blacklist-list"></ul>
+                  </section>
+                </div>
               </details>
             </section>
           </div>

@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   buildTasteProfile,
   clearLocalTasteData,
+  getActiveBlacklistPlaceIds,
   getInteractions,
   getTasteProfile,
   saveInteraction,
@@ -17,7 +18,7 @@ class MemoryStorage {
 
 test("interactions 與 Taste Profile 會持續寫入 localStorage 介面", () => {
   const storage = new MemoryStorage();
-  saveInteraction({ action: "accepted", placeId: "demo-a", placeName: "熱飯小館", categories: ["台式"], tags: ["taiwanese", "hot"] }, storage);
+  saveInteraction({ action: "accepted", placeId: "demo-a", placeName: "熱飯小館", categories: ["台式"], tags: ["taiwanese", "hot"], currentNeed: "今天想吃熱的", meal: "dinner", at: "2026-01-01T00:00:00.000Z" }, storage);
   saveInteraction({ action: "favorited", placeId: "demo-a", placeName: "熱飯小館", categories: ["台式"], tags: ["taiwanese", "hot"] }, storage);
   saveInteraction({ action: "rerolled", placeId: "demo-b", placeName: "拉麵小屋", categories: ["日式"], tags: ["japanese", "noodles"] }, storage);
 
@@ -28,6 +29,9 @@ test("interactions 與 Taste Profile 會持續寫入 localStorage 介面", () =>
   assert.ok(profile.tagWeights.taiwanese > 0);
   assert.ok(profile.favoritePlaceIds.includes("demo-a"));
   assert.ok(profile.avoidPreferences.some((item) => item.key === "noodles"));
+  assert.equal(interactions[0].currentNeed, "今天想吃熱的");
+  assert.equal(interactions[0].meal, "dinner");
+  assert.equal(interactions[0].at, "2026-01-01T00:00:00.000Z");
 });
 
 test("profile 可由純事件重建，且會保留封鎖訊號", () => {
@@ -36,6 +40,27 @@ test("profile 可由純事件重建，且會保留封鎖訊號", () => {
   ]);
   assert.equal(profile.actionCounts.blacklisted, 1);
   assert.equal(profile.tagWeights.spicy, -4);
+});
+
+test("收藏是 active state，重複與來回切換不會無限放大權重", () => {
+  const profile = buildTasteProfile([
+    { action: "favorited", placeId: "demo-a", placeName: "熱飯小館", tags: ["rice"] },
+    { action: "favorited", placeId: "demo-a", placeName: "熱飯小館", tags: ["rice"] },
+    { action: "unfavorited", placeId: "demo-a", placeName: "熱飯小館", tags: ["rice"] },
+    { action: "favorited", placeId: "demo-a", placeName: "熱飯小館", tags: ["rice"] },
+  ]);
+  assert.deepEqual(profile.favoritePlaceIds, ["demo-a"]);
+  assert.equal(profile.tagWeights.rice, 3);
+});
+
+test("blacklist 以最新 active state 為準，恢復後不再 hard block", () => {
+  const events = [
+    { action: "blacklisted", placeId: "demo-a", placeName: "熱飯小館", tags: ["rice"] },
+    { action: "blacklisted", placeId: "demo-a", placeName: "熱飯小館", tags: ["rice"] },
+    { action: "unblacklisted", placeId: "demo-a", placeName: "熱飯小館", tags: ["rice"] },
+  ];
+  assert.deepEqual(getActiveBlacklistPlaceIds(events), []);
+  assert.deepEqual(buildTasteProfile(events).blacklistedPlaceIds, []);
 });
 
 test("shown 是可追蹤但不會產生偏好分數的事件", () => {

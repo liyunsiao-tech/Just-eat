@@ -11,9 +11,9 @@ const ACTION_SCORES = Object.freeze({
   shown: 0,
   accepted: 1,
   rerolled: -0.5,
-  favorited: 3,
   blacklisted: -4,
 });
+const MEALS = new Set(["breakfast", "lunch", "dinner", "dessert", "latenight"]);
 
 function resolveStorage(storage) {
   if (storage) return storage;
@@ -75,6 +75,8 @@ export function normalizeInteraction(event = {}) {
     tags: [...new Set((Array.isArray(event.tags) ? event.tags : [])
       .map((value) => cleanText(value, 60)).filter(Boolean))].slice(0, 16),
     priceLevel: normalizeNumber(event.priceLevel, 0, 4),
+    currentNeed: cleanText(event.currentNeed, 240),
+    meal: MEALS.has(event.meal) ? event.meal : "",
     at: cleanText(event.at, 40) || new Date().toISOString(),
   };
 }
@@ -93,12 +95,9 @@ export function buildTasteProfile(interactions = []) {
   const priceLevelWeights = {};
   const actionCounts = Object.fromEntries(ACTIONS.map((action) => [action, 0]));
   const favoritePlaceIds = new Set();
+  const blacklistedPlaceIds = new Set();
 
-  for (const rawInteraction of Array.isArray(interactions) ? interactions : []) {
-    const interaction = normalizeInteraction(rawInteraction);
-    if (!interaction) continue;
-    actionCounts[interaction.action] += 1;
-    const score = ACTION_SCORES[interaction.action] || 0;
+  const addScore = (interaction, score) => {
     for (const tag of interaction.tags) tagWeights[tag] = (tagWeights[tag] || 0) + score;
     for (const category of interaction.categories) {
       categoryWeights[category] = (categoryWeights[category] || 0) + score;
@@ -107,20 +106,52 @@ export function buildTasteProfile(interactions = []) {
       const key = String(interaction.priceLevel);
       priceLevelWeights[key] = (priceLevelWeights[key] || 0) + score;
     }
-    if (interaction.action === "favorited") favoritePlaceIds.add(interaction.placeId);
+  };
+
+  for (const rawInteraction of Array.isArray(interactions) ? interactions : []) {
+    const interaction = normalizeInteraction(rawInteraction);
+    if (!interaction) continue;
+    actionCounts[interaction.action] += 1;
+    if (interaction.action === "favorited") {
+      if (!favoritePlaceIds.has(interaction.placeId)) {
+        favoritePlaceIds.add(interaction.placeId);
+        addScore(interaction, 3);
+      }
+      continue;
+    }
+    if (interaction.action === "unfavorited") {
+      if (favoritePlaceIds.delete(interaction.placeId)) addScore(interaction, -3);
+      continue;
+    }
+    if (interaction.action === "blacklisted") {
+      if (!blacklistedPlaceIds.has(interaction.placeId)) {
+        blacklistedPlaceIds.add(interaction.placeId);
+        addScore(interaction, ACTION_SCORES.blacklisted);
+      }
+      continue;
+    }
+    if (interaction.action === "unblacklisted") {
+      blacklistedPlaceIds.delete(interaction.placeId);
+      continue;
+    }
+    addScore(interaction, ACTION_SCORES[interaction.action] || 0);
   }
 
   const topPreferences = sortedWeights(tagWeights).filter(({ score }) => score > 0);
   const avoidPreferences = sortedWeights(tagWeights).filter(({ score }) => score < 0);
 
   return {
-    version: 1,
-    interactionCount: (Array.isArray(interactions) ? interactions : []).length,
+    version: 2,
+    interactionCount: (Array.isArray(interactions) ? interactions : [])
+      .map(normalizeInteraction)
+      .filter((interaction) => interaction && interaction.action !== "shown").length,
+    eventCount: (Array.isArray(interactions) ? interactions : []).length,
     actionCounts,
     tagWeights,
     categoryWeights,
     priceLevelWeights,
     favoritePlaceIds: [...favoritePlaceIds].slice(0, 50),
+    blacklistedPlaceIds: [...blacklistedPlaceIds].slice(0, 50),
     topPreferences,
     avoidPreferences,
     updatedAt: new Date().toISOString(),
@@ -135,8 +166,30 @@ export function getInteractions(storage) {
 
 export function getTasteProfile(storage) {
   const saved = readJson(STORAGE_KEYS.tasteProfile, storage);
-  if (saved && saved.version === 1 && typeof saved.tagWeights === "object") return saved;
+  if (saved && saved.version === 2 && typeof saved.tagWeights === "object") return saved;
   return buildTasteProfile(getInteractions(storage));
+}
+
+export function getActiveFavoritePlaceIds(interactions = []) {
+  const active = new Set();
+  for (const rawInteraction of Array.isArray(interactions) ? interactions : []) {
+    const interaction = normalizeInteraction(rawInteraction);
+    if (!interaction) continue;
+    if (interaction.action === "favorited") active.add(interaction.placeId);
+    if (interaction.action === "unfavorited") active.delete(interaction.placeId);
+  }
+  return [...active];
+}
+
+export function getActiveBlacklistPlaceIds(interactions = []) {
+  const active = new Set();
+  for (const rawInteraction of Array.isArray(interactions) ? interactions : []) {
+    const interaction = normalizeInteraction(rawInteraction);
+    if (!interaction) continue;
+    if (interaction.action === "blacklisted") active.add(interaction.placeId);
+    if (interaction.action === "unblacklisted") active.delete(interaction.placeId);
+  }
+  return [...active];
 }
 
 export function saveInteraction(event, storage) {
@@ -152,10 +205,12 @@ export function saveInteraction(event, storage) {
 export function compactProfile(profile = {}) {
   return {
     interactionCount: Number.isFinite(Number(profile.interactionCount)) ? Number(profile.interactionCount) : 0,
+    eventCount: Number.isFinite(Number(profile.eventCount)) ? Number(profile.eventCount) : 0,
     actionCounts: profile.actionCounts && typeof profile.actionCounts === "object" ? profile.actionCounts : {},
     likedTags: Array.isArray(profile.topPreferences) ? profile.topPreferences.slice(0, 5) : [],
     avoidedTags: Array.isArray(profile.avoidPreferences) ? profile.avoidPreferences.slice(0, 5) : [],
     favoritePlaceIds: Array.isArray(profile.favoritePlaceIds) ? profile.favoritePlaceIds.slice(0, 20) : [],
+    blacklistedPlaceIds: Array.isArray(profile.blacklistedPlaceIds) ? profile.blacklistedPlaceIds.slice(0, 20) : [],
     tagWeights: profile.tagWeights && typeof profile.tagWeights === "object" ? profile.tagWeights : {},
     categoryWeights: profile.categoryWeights && typeof profile.categoryWeights === "object" ? profile.categoryWeights : {},
   };
@@ -171,6 +226,9 @@ export function compactInteraction(interaction = {}) {
     categories: normalized.categories,
     tags: normalized.tags,
     priceLevel: normalized.priceLevel,
+    currentNeed: normalized.currentNeed,
+    meal: normalized.meal,
+    at: normalized.at,
   };
 }
 

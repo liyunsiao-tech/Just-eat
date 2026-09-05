@@ -5,7 +5,9 @@ export const ACTIONS = Object.freeze([
   "accepted",
   "rerolled",
   "favorited",
+  "unfavorited",
   "blacklisted",
+  "unblacklisted",
 ]);
 
 export const CHAIN_NAMES = Object.freeze([
@@ -31,6 +33,9 @@ export const CHAIN_NAMES = Object.freeze([
 
 const ACTION_SET = new Set(ACTIONS);
 
+const NEGATION_PATTERN = /不要|不吃|不想吃|避開|排除|別給我|不用|吃膩|吃太多|換別|換點/iu;
+const COMPLEX_NEED_PATTERN = /但|但是|不過|除了|除非|可以|如果|假如|沒有別的|再|或|或者|都可以|隨便|看情況|吃膩|吃太多|換別|換點|最近|常吃|探索|試試|沒吃過|新選擇|新的|太辣/iu;
+
 const CATEGORY_RULES = Object.freeze([
   { key: "taiwanese", label: "台式", pattern: /台式|台灣|小吃|便當|熱炒|taiwan/i },
   { key: "japanese", label: "日式", pattern: /日式|日本|拉麵|壽司|居酒屋|japan|ramen|sushi/i },
@@ -47,7 +52,7 @@ const NEED_PATTERNS = Object.freeze([
   {
     tag: "rice",
     pattern:
-      /(?:不要|不吃|不想吃|避開|排除|別給我|不用).{0,12}(?:飯|米飯|丼|便當|rice)/iu,
+      /(?:不要|不吃|不想吃|避開|排除|別給我|不用).{0,12}(?:米飯|白飯|飯類|便當|丼飯|丼|rice)/iu,
   },
   {
     tag: "noodles",
@@ -56,17 +61,28 @@ const NEED_PATTERNS = Object.freeze([
   },
   {
     tag: "seafood",
-    pattern: /(?:不要|不吃|不想吃|避開|排除|別給我).{0,12}(?:海鮮|魚|蝦|蟹|seafood|fish|shrimp)/iu,
+    pattern: /(?:不要|不吃|不想吃|避開|排除|別給我).{0,12}(?:海鮮|海產|seafood)/iu,
   },
   {
     tag: "meat",
-    pattern: /(?:不要|不吃|不想吃|避開|排除|別給我).{0,12}(?:肉|牛|豬|雞|漢堡|beef|pork|chicken|meat)/iu,
+    pattern: /(?:不要|不吃|不想吃|避開|排除|別給我).{0,12}(?:(?<!牛)(?<!豬)(?<!雞)(?<!羊)(?:肉類|肉食|肉)|漢堡|beef|pork|chicken|meat)/iu,
   },
   {
     tag: "spicy",
     pattern: /(?:不要|不吃|不想吃|避開|排除|別給我).{0,12}(?:辣|麻辣|spicy)/iu,
   },
 ]);
+
+const UNSUPPORTED_NEED_RULES = Object.freeze([
+  { pattern: /排隊|候位|等位|queue/iu, message: "目前沒有可靠候位資料" },
+  { pattern: /安靜|聊天|坐很久|久坐|適合聊天/iu, message: "目前沒有可靠座位與環境資料" },
+  { pattern: /份量|大份|吃得飽/iu, message: "目前沒有可靠份量資料" },
+  { pattern: /太油|油膩|健康|蛋白質|營養/iu, message: "目前沒有可靠營養與油膩程度資料" },
+  { pattern: /太辣|辣度|微辣|小辣|中辣|大辣/iu, message: "目前沒有可靠辣度資料" },
+  { pattern: /過敏|allerg(?:y|ies)|花生|堅果|乳糖|麩質|gluten|nuts?|peanut/iu, message: "目前無法可靠確認餐廳過敏原，請向餐廳確認。" },
+]);
+
+const ALLERGEN_PATTERN = /過敏|allerg(?:y|ies)|花生|堅果|乳糖|麩質|gluten|nuts?|peanut/iu;
 
 const cleanText = (value, maxLength = 180) =>
   typeof value === "string"
@@ -147,6 +163,29 @@ export function sanitizeCandidate(candidate = {}) {
   const mapsUrl = typeof candidate.mapsUrl === "string" && /^https:\/\//i.test(candidate.mapsUrl)
     ? candidate.mapsUrl.slice(0, 500)
     : "";
+  const photoUrl = typeof candidate.photoUrl === "string" && /^https:\/\//i.test(candidate.photoUrl)
+    ? candidate.photoUrl.slice(0, 1_200)
+    : "";
+  const photoAttributions = [];
+  for (const value of Array.isArray(candidate.photoAttributions) ? candidate.photoAttributions : []) {
+    if (!value || typeof value !== "object") continue;
+    const displayName = cleanText(value.displayName, 160);
+    const uri = typeof value.uri === "string" && /^https:\/\//i.test(value.uri)
+      ? value.uri.slice(0, 500)
+      : "";
+    if (!displayName && !uri) continue;
+    const key = `${displayName}\u0000${uri}`;
+    if (photoAttributions.some((item) => `${item.displayName}\u0000${item.uri}` === key)) continue;
+    photoAttributions.push({ displayName, uri });
+    if (photoAttributions.length >= 6) break;
+  }
+  const allowedBusinessStatuses = new Set([
+    "OPERATIONAL",
+    "CLOSED_TEMPORARILY",
+    "CLOSED_PERMANENTLY",
+    "FUTURE_OPENING",
+  ]);
+  const businessStatus = allowedBusinessStatuses.has(candidate.businessStatus) ? candidate.businessStatus : "";
 
   return {
     placeId,
@@ -157,10 +196,13 @@ export function sanitizeCandidate(candidate = {}) {
     priceLevel,
     distanceKm,
     isOpen,
+    businessStatus,
     categories,
     tags,
     source,
     mapsUrl,
+    photoUrl,
+    photoAttributions,
   };
 }
 
@@ -175,32 +217,48 @@ export function sanitizeCandidates(candidates) {
 
 export function extractNeedConstraints(need = "") {
   const currentNeed = cleanText(need, MAX_TEXT_LENGTH);
+  const isComplex = COMPLEX_NEED_PATTERN.test(currentNeed);
+  const hasNegation = NEGATION_PATTERN.test(currentNeed);
   const blockedTags = new Set();
-  for (const rule of NEED_PATTERNS) {
-    if (rule.pattern.test(currentNeed)) blockedTags.add(rule.tag);
+  if (!isComplex) {
+    for (const rule of NEED_PATTERNS) {
+      if (rule.pattern.test(currentNeed)) blockedTags.add(rule.tag);
+    }
   }
 
-  const vegetarian = /素食|蔬食|全素|蛋奶素|vegan|vegetarian/i.test(currentNeed);
+  const vegetarian = !isComplex && /素食|蔬食|全素|蛋奶素|vegan|vegetarian/i.test(currentNeed);
   if (vegetarian) {
     blockedTags.add("meat");
     blockedTags.add("seafood");
   }
 
   const preferredTags = new Set();
-  if (/熱的|熱食|暖和|湯|鍋|hot|soup/i.test(currentNeed)) preferredTags.add("hot");
-  if (/清爽|清淡|沙拉|生魚|新鮮|fresh|salad/i.test(currentNeed)) preferredTags.add("fresh");
-  if (/甜點|蛋糕|咖啡|下午茶|dessert|coffee/i.test(currentNeed)) preferredTags.add("cafe");
-  for (const rule of CATEGORY_RULES) {
-    if (rule.pattern.test(currentNeed)) preferredTags.add(rule.key);
+  if (/(?:想吃|想要|來點|希望).{0,8}(?:熱的|熱食|暖和|湯|鍋|hot|soup)/iu.test(currentNeed)) preferredTags.add("hot");
+  if (/(?:想吃|想要|來點|希望).{0,8}(?:清爽|清淡|沙拉|生魚|新鮮|fresh|salad)/iu.test(currentNeed)) preferredTags.add("fresh");
+  if (!isComplex && !hasNegation && /甜點|蛋糕|咖啡|下午茶|dessert|coffee/iu.test(currentNeed)) {
+    preferredTags.add("cafe");
   }
+  if (!isComplex && !hasNegation) {
+    for (const rule of CATEGORY_RULES) {
+      if (rule.pattern.test(currentNeed)) preferredTags.add(rule.key);
+    }
+  }
+
+  const unsupportedNeeds = UNSUPPORTED_NEED_RULES
+    .filter(({ pattern }) => pattern.test(currentNeed))
+    .map(({ message }) => message);
 
   return {
     currentNeed,
+    isComplex,
+    fallbackHardFilter: !isComplex && blockedTags.size > 0,
     blockedTags: [...blockedTags],
     preferredTags: [...preferredTags],
     vegetarian,
+    allergenConcern: ALLERGEN_PATTERN.test(currentNeed),
     wantsHot: preferredTags.has("hot"),
     wantsFresh: preferredTags.has("fresh"),
+    unsupportedNeeds,
   };
 }
 
@@ -218,16 +276,18 @@ export function filterCandidatesBySettings(candidates, settings = {}) {
   const category = cleanText(settings.category, 30) || "all";
   const price = cleanText(settings.price, 20) || "all";
   const minimumRating = numberOrNull(settings.minRating, 0, 5) ?? 0;
+  const radiusKm = numberOrNull(settings.radiusKm, 1, 20) ?? 20;
   return normalizedCandidates.filter((candidate) => {
     const tags = new Set(candidate.tags);
     const matchesCategory = category === "all" || tags.has(category);
     const matchesRating = candidate.rating === null || candidate.rating >= minimumRating;
+    const matchesRadius = candidate.distanceKm === null || candidate.distanceKm <= radiusKm;
     const matchesChains = !settings.excludeChains || !CHAIN_NAMES.some((chain) => candidate.name.includes(chain));
     let matchesPrice = true;
     if (price === "cheap") matchesPrice = candidate.priceLevel === null || candidate.priceLevel <= 1;
     if (price === "moderate") matchesPrice = candidate.priceLevel === null || (candidate.priceLevel >= 1 && candidate.priceLevel <= 2);
     if (price === "expensive") matchesPrice = candidate.priceLevel === null || candidate.priceLevel >= 3;
-    return matchesCategory && matchesRating && matchesChains && matchesPrice;
+    return matchesCategory && matchesRating && matchesRadius && matchesChains && matchesPrice;
   });
 }
 
@@ -288,8 +348,11 @@ export function toAiCandidate(candidate) {
     categories: normalized.categories,
     tags: normalized.tags,
     rating: normalized.rating,
+    userRatingsTotal: normalized.userRatingsTotal,
     priceLevel: normalized.priceLevel,
     distanceKm: normalized.distanceKm,
+    isOpen: normalized.isOpen,
+    businessStatus: normalized.businessStatus,
     address: normalized.address,
   };
 }
