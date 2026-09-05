@@ -1,133 +1,136 @@
 # eat
 
-`eat` 是一個 local-first 的吃什麼決定器：保留原本「從附近候選中直接幫我決定一家」的低摩擦流程，再用當下的一句話、每次選擇與本機 Taste Profile 讓決定逐漸更像你。
+## 問題與目標
 
-本專案是獨立的新 repository，使用乾淨 Git history；不以 submodule、symlink 或工作樹方式修改任何原始 `roulette-eater` repository。驗收時以唯讀方式核對原始功能，並以 HTML、CSS、Vanilla JavaScript、PWA、Google Places 與 weighted random 的最小架構完成安全延伸。
+很多時候不是附近沒有餐廳，而是人在餓的時候不想比較一長串選項。`eat` 是一個 local-first 的吃什麼決定器，讓使用者輸入當下的一句話，再從附近候選中直接選出一家。
 
-## 核心流程
+目標使用者是想快速決定下一餐、又希望結果慢慢貼近自己口味的人。`eat` 結合餐期、距離、預算、評分與分類等條件，也記住每次看見、接受、重抽、收藏或避開的選擇；口味輪廓只留在使用者的裝置上，沒有登入與跨裝置同步。
 
-1. 設定餐期、搜尋範圍、預算與口味方向。
-2. 選填一句當下需求，例如「今天想吃熱的，不要麵」；明確排除條件優先於長期偏好。
-3. 允許瀏覽器定位後，使用 Google Places API (New) 的 `Place.searchByText()` 取得附近真實餐廳候選；搜尋結果再以 client-side 精確距離檢查落在所選半徑內。
-4. 若 AI 可用，server-side proxy 將當下需求、設定、Taste Profile、近期行為與候選清單送到 OpenAI-compatible chat completion endpoint。
-5. AI 只能回傳候選清單裡的 `placeId`；格式錯誤、未知 ID、timeout、HTTP 錯誤或未設定 AI 時，自動回到原本 weighted random。
-6. 每次候選呈現（`shown`）以及「吃這家」「換一家」「收藏」「不想吃這類」都會寫入本機 interactions，並重算 Taste Profile；`shown` 不會單獨增加或降低偏好分數。
+## 核心功能
 
-沒有 Google key 或沒有定位權限時，App 會明確顯示「示範候選」並仍可測試基本決定流程；示範資料不會冒充附近真實餐廳，也不會送進 AI 個人化流程。
+- 以餐期、搜尋半徑、預算、最低評分、分類、營業狀態與連鎖店偏好縮小候選範圍。
+- 使用瀏覽器定位與 Google Places API (New) 搜尋附近真實餐廳，並在瀏覽器端再次檢查實際距離。
+- 讓使用者用 `currentNeed` 描述當下需求；AI 可用時由 server-side proxy 從既有候選中選一家，不能自行捏造餐廳。
+- AI 未設定、逾時、回應錯誤或選擇不合法時，回到加權隨機，基本決定流程仍可使用。
+- 將 `shown`、`accepted`、`rerolled`、`favorited` 與 blacklist 等互動寫入本機，重新計算 Taste Profile；`shown` 只代表看過，不會單獨增加偏好分數。
+- 沒有 Google key 或定位權限時切換到明確標示的示範候選；PWA 會快取應用程式外殼，但 API 與附近餐廳搜尋仍需要網路。
 
-## 架構
+## 系統架構
 
 ```text
-瀏覽器（HTML/CSS/Vanilla JS/PWA）
-       │
-       ├─ navigator.geolocation（只在當次搜尋記憶體使用，不寫入 localStorage）
-       ├─ Google Maps JavaScript + Places（browser key 由 server runtime 注入）
-       ├─ localStorage：interactions + Taste Profile + 非敏感設定
-       └─ POST /api/recommend
-              │
-              ├─ server 驗證與清理 payload
-              ├─ structured filters／active blacklist 過濾候選
-              ├─ AI 可用時保留完整候選，由模型理解 currentNeed；不可用時採保守 parser
-              ├─ OpenAI-compatible AI（API key 僅 server environment）
-              └─ 失敗時 weighted random fallback
+[使用者瀏覽器]
+  |-- HTML / CSS / Vanilla JavaScript / PWA
+  |-- navigator.geolocation（只在當次搜尋使用，不寫入 localStorage）
+  |-- Google Maps JavaScript API + Places API (New)
+  |-- localStorage（互動、Taste Profile、非敏感設定）
+  +-- POST /api/recommend
+          |
+          v
+[Node.js 20+ 原生 http server]
+  |-- 驗證與清理 request payload
+  |-- 套用結構化條件與 active blacklist
+  |-- AI 可用：把當下需求、口味輪廓、近期互動與候選送至 Groq
+  |             +-- 只接受候選清單中的 placeId
+  +-- AI 不可用或失敗：weighted random fallback
 ```
 
-沒有登入、帳號、Supabase、Firebase、SQL database、vector database、RAG、Agent 或聊天介面。這個版本刻意把穩定的基本決策流程放在 AI 之外。
+瀏覽器先取得候選並套用表單條件；真正的餐廳資料來自 Google Places，示範候選則是程式內建的測試資料。`POST /api/recommend` 只在需要個人化選擇時呼叫 server，API key 留在 server environment。專案沒有登入、伺服器資料庫、向量資料庫或 RAG；互動與口味輪廓由瀏覽器的 `localStorage` 保存。
 
-## 技術
+## 使用技術
 
-| 類型 | 技術 | 用途 |
+| 類型 | 技術／服務 | 用途 |
 | --- | --- | --- |
-| 前端 | HTML、CSS、Vanilla JavaScript ES modules | 低依賴的主要體驗 |
-| PWA | Web App Manifest、Service Worker | 可安裝與 shell cache；API 永遠走網路 |
-| 地點 | Google Maps JavaScript API + Places API (New) | `Place.searchByText()` 取得當下附近真實餐廳 |
-| 個人化 | localStorage、可替換 OpenAI-compatible endpoint | 本機口味輪廓與候選選擇 |
-| 後端 | Node.js 20+ 原生 `http` server | 靜態檔案、runtime config、AI proxy |
+| AI 模型 | Groq OpenAI-compatible Chat Completions；預設 `openai/gpt-oss-120b` | 從已提供的候選中理解 `currentNeed` 並選出一家；失敗時不阻斷主流程 |
+| 前端 | HTML、CSS、Vanilla JavaScript ES modules | 低依賴的主要使用介面與互動流程 |
+| 後端 | Node.js 20+、原生 `http`、原生 `fetch` | 靜態檔案、runtime config、推薦 API 與 AI proxy |
+| 地點服務 | Google Maps JavaScript API、Places API (New) | 取得附近餐廳、距離、評分、價格、營業狀態與照片欄位 |
+| 本機資料 | `localStorage`、Web App Manifest、Service Worker | 保存裝置端互動與口味輪廓，提供可安裝的 PWA 外殼 |
+| Sponsor 技術 | 無／未參加 | 本專案目前沒有指定 Sponsor Challenge |
 
 ## 安裝與執行
 
-需要 Node.js 20 或以上；本專案沒有必須安裝的 npm dependency。
+需要 Node.js 20 或以上。本專案沒有必須安裝的 npm runtime dependency，但仍可依下列步驟安裝與啟動：
 
 ```bash
+git clone https://github.com/liyunsiao-tech/Just-eat.git
+cd Just-eat
+npm install
 cp .env.example .env
-# 編輯 .env，只在本機填入 runtime 設定
 npm start
 ```
 
-打開 <http://127.0.0.1:4173>。若不填任何 key，仍可使用示範候選與 weighted random，並可完整測試 interactions 與 Taste Profile。
+開啟 <http://127.0.0.1:4173>。不填任何 key 時仍可使用示範候選、加權隨機與本機 Taste Profile。
 
-### Google Places 安全設定
-
-`GOOGLE_MAPS_BROWSER_KEY` 只從 server environment 在執行時傳給瀏覽器，不會出現在 source code、Git 或 README。因為它是 browser key，必須在 Google Cloud Console：
-
-- 設定 HTTP referrer restriction，只允許本機開發網址與正式網域，不要使用 unrestricted。
-- API restriction 只允許實際使用的 Maps JavaScript API 與 Places API (New)；若專案另列 legacy Places API，請依實際需求檢查，不要為了方便開放全部 API。
-- 設定日／分鐘 quota 與 usage／billing alert。
-- 本機與 production 使用不同 key；production key 不要放進 local repository。
-- 若舊 `roulette-eater` 的 browser key 曾公開，請在 Google Cloud Console 旋轉或撤銷，不要搬到 `eat`。
-
-目前只要求 Place ID、名稱、地址、位置、評分、評分數、價格、營業狀態、類型、Google Maps URI 與照片欄位，不使用 `fields: ["*"]`。照片 URI 只在目前頁面的 fresh candidate 記憶體中使用，不寫入 localStorage；顯示照片時一併顯示 Google Places 回傳的 photo author attribution。
-
-### AI 設定
-
-正式部署目前採用 Groq 的 OpenAI-compatible API；本專案用原生 `fetch`，不安裝 Groq 或 OpenAI SDK。Groq 的 base URL 與 Chat Completions 路徑遵循其 OpenAI compatibility 介面。
+### 環境變數
 
 ```dotenv
+PORT=4173
+
+# 選填：Google Maps JavaScript browser key
+GOOGLE_MAPS_BROWSER_KEY=
+
+# 選填：server-side AI 設定
 AI_BASE_URL=https://api.groq.com/openai/v1
 AI_MODEL=openai/gpt-oss-120b
-AI_API_KEY=只存在本機或部署平台的 server environment
+AI_API_KEY=
 AI_TIMEOUT_MS=5000
 ```
 
-AI adapter 使用一般 `/chat/completions` 介面；保留 `AI_BASE_URL`、`AI_MODEL` 與原生 fetch，之後仍可替換成其他 OpenAI-compatible provider。`AI_API_KEY` 只放在本機 `.env` 或部署平台的 server environment，不會放進前端、README、console log、browser response 或 Git。
+`GOOGLE_MAPS_BROWSER_KEY` 只會由 server 在執行時提供給瀏覽器。正式使用時，請在 Google Cloud Console 設定 HTTP referrer restriction、API restriction、quota 與 billing alert，不要使用 unrestricted key，也不要把 key 提交到 Git。
 
-每次按「幫我決定」最多發出一次 AI request；`shown`、`rerolled`、收藏、黑名單與背景流程不會另發 AI request。AI timeout、429、HTTP error、invalid JSON、未知 `placeId` 或 provider 不可用時，server 自動回到 weighted random。Groq Console 的 Data Controls／Zero Data Retention 若要使用，請在 provider console 另行設定；本專案不假設該設定已啟用。
+填入 Google key 並允許定位後，應用程式會搜尋附近真實餐廳。AI 設定只放在本機 `.env` 或部署平台的 server environment；AI 逾時、HTTP 錯誤、格式錯誤、未知 `placeId` 或 provider 不可用時，會自動回到 weighted random。
 
 ### Render Free Web Service
 
-目前部署目標是 Render Free Web Service，使用 Node runtime，不需要 Express、Next.js 或其他 framework。
+目前部署環境為 Render Free Web Service，公開展示網址尚未提供。Render 設定如下：
 
 - Build Command：`npm install`
 - Start Command：`npm start`
 - Health Check Path：`/api/health`
-- Service 必須提供 `PORT`；server 會監聽 `0.0.0.0`，符合 Render Web Service 的對外綁定需求。
-- 在 Render Environment Variables 設定 `GOOGLE_MAPS_BROWSER_KEY`、`AI_BASE_URL`、`AI_MODEL`、`AI_API_KEY`、`AI_TIMEOUT_MS=5000`；不要把值寫回 repository。
-- 使用者互動與 Taste Profile 仍只存在 browser localStorage；Render 不使用檔案或 database 保存它們。
+- 在 Render Environment Variables 設定 `GOOGLE_MAPS_BROWSER_KEY`、`AI_BASE_URL`、`AI_MODEL`、`AI_API_KEY` 與 `AI_TIMEOUT_MS=5000`。
+- server 會監聽 Render 提供的 `PORT` 與 `0.0.0.0`；Render 不保存使用者的互動或 Taste Profile。
 
-## 本機資料與隱私
-
-localStorage 只保存最近最多 200 筆互動、由互動重算的 Taste Profile，以及餐期／範圍等非敏感設定。互動不保存 GPS；GPS 只留在當次瀏覽器記憶體，供 Places 搜尋使用。資料不會自動上傳或跨裝置同步。
-
-建議使用瀏覽器的 site data 清除功能移除本機足跡；不要把瀏覽器 profile、localStorage export、`.env` 或任何真實使用紀錄加入 repository。
-
-## 測試與安全稽核
+### 測試與安全稽核
 
 ```bash
 npm test
-git init -b main
-git add .
-npm run security             # 第一次 commit 前掃描 staged files
-git diff --cached --check
-git status --short
-git commit -m "feat: create local-first eat decision maker"
-npm run security:history    # commit 後掃描完整 Git history
+npm run security          # 對已 staged 的檔案掃描
+npm run security:history  # 對 Git history 掃描
 ```
 
-`.gitignore` 會排除 `.env`、runtime output、local test data 與常見 credential 檔。`scripts/secret-audit.mjs` 會檢查常見 API key／token／private key／JWT、GPS-like 小數與 credential-like 路徑。請在推送 GitHub 前再次於乾淨 checkout 執行 staged 與 history audit。
+## 作品展示
 
-## 限制與下一步
+- 作品展示網址（選填）：尚未提供
+- 評選影片：製作中
 
-- Google Places 必須有正確 referrer、API 啟用、quota 與定位權限；否則產品會清楚退回示範候選，不會假裝有附近真實資料。
-- 自然語言是 free-form currentNeed：AI 可用時保留結構化篩選後的完整候選，交給模型理解否定、例外與暫時需求；AI 不可用時只對簡單、明確、無例外的排除（例如「不要麵」）採保守 hard filter，避免把複合語意誤刪。
-- localStorage 是單一裝置資料，沒有登入、同步與跨裝置 profile；這是刻意的隱私與 12 小時範圍取捨。
-- 後續可在不改變核心契約的前提下加入更完整的 Places 欄位、可解釋的 profile 編輯與部署平台 adapter。
+## 限制與未來工作
 
-## 第三方服務與授權
+- Google Places 需要有效的 API 設定、referrer restriction、quota、billing 與定位權限；缺少其中一項時，產品會顯示示範候選，不假裝取得附近真實資料。
+- `currentNeed` 是自由文字。AI 可用時會保留結構化條件後的候選，交給模型處理否定、例外與暫時需求；AI 不可用時只對簡單且明確的排除條件採保守 hard filter。
+- Places 欄位無法可靠判斷候位時間、安靜程度、座位、份量、油膩程度、營養或精確辣度。過敏需求也不能由 Places 資料推導安全性，使用者仍必須向餐廳確認。
+- `localStorage` 最多保留最近 200 筆互動，只適用於目前裝置，沒有帳號、跨裝置同步或伺服器備份；GPS 不會寫入互動紀錄。
+- PWA 的外殼可在網路不穩時由快取協助載入，但 Google Places 與推薦 API 仍需要網路。Render Free Web Service 也可能因長時間閒置而暫停。
+- 後續可加入可解釋的口味輪廓編輯、更完整的 Places 欄位與其他部署平台 adapter；若加入帳號或同步，必須重新設計資料保存與隱私邊界。
 
-- Google Maps Platform：執行時由使用者自行設定 project、API、quota 與 billing；請依 Google Maps Platform 條款與顯示要求使用。
-- AI provider：由部署者自行選擇 OpenAI-compatible 服務與其條款；本專案不附帶模型、key 或資料集。
-- 本專案程式碼採 MIT License，見 [LICENSE](LICENSE)。
+## 第三方服務、資料與素材
+
+- [Google Maps Platform／Places JavaScript API 文件](https://developers.google.com/maps/documentation/javascript/reference/place)：執行時搜尋附近餐廳與取得 Places 欄位。使用者或部署者自行管理 Google Cloud project、API、quota 與 billing，並依 [Google Maps Platform 條款](https://cloud.google.com/maps-platform/terms) 及 Google 的 attribution 要求使用；本專案不內建 Google API key，也不把 Places 資料當成靜態資料集提交。
+- [Groq API 文件](https://console.groq.com/docs/api-reference)：提供選用的 OpenAI-compatible `/chat/completions` endpoint。API key 由部署者自行申請並只放在 server environment；Groq 服務依其平台條款使用，本專案不附帶模型權重或訓練資料集。
+- [Render Web Services 文件](https://render.com/docs/web-services)：作為目前的部署平台；Render 帳號、服務設定、計費與部署條款由部署者管理。
+- `icons/` 內的 logo、favicon 與 PWA 圖示：團隊自製或已取得授權，依團隊持有或取得的授權使用。
+- `app.js` 內的示範餐廳：僅供沒有 Google key 或定位時測試流程的內建資料，不代表真實店家，也不是外部資料集。
+- 本專案程式碼採 MIT License，授權文字見根目錄的 [LICENSE](LICENSE)。
+
+## 團隊成員
+
+| 姓名 | 分工 |
+| --- | --- |
+| 蔡皓程 | AI 控制 |
+| 陳奕安 | 規劃 |
+| 傅晨祐 | 資料蒐集與提供想法 |
 
 ## License
 
 MIT
+
+本專案的程式碼採 MIT License。它允許他人使用、複製、修改、散布與商用，但散布時必須保留著作權與授權聲明；軟體依現況提供，不保證沒有問題。這只適用於本專案程式碼，不會改變 Google Maps、Groq、Render 或其他外部服務各自的條款與資料權利。詳情可參考 [MIT License 官方說明](https://opensource.org/license/mit) 與根目錄的 [LICENSE](LICENSE)。
