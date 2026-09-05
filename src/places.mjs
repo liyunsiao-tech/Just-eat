@@ -14,6 +14,55 @@ export const NEW_PLACE_SEARCH_FIELDS = Object.freeze([
   "photos",
 ]);
 
+const GENERIC_NEED_PATTERN = /^(?:隨便|你決定|都可以|沒想法|我不知道(?:吃什麼)?)(?:[，,、\s]*(?:隨便|你決定|都可以|沒想法|我不知道(?:吃什麼)?))*[。.!！!?？]*$/iu;
+const FATIGUE_PATTERN = /吃太多|吃膩|吃腻|不想再吃|不要再吃|最近常吃|換別的|換點別的|换别的|换点别的/iu;
+const NEGATION_PATTERN = /不要|不吃|不想吃|不想喝|避開|排除|別給我|不用/iu;
+const EXPLICIT_POSITIVE_PATTERN = /(?<!不)(?<!沒)(?<!没)(?:想吃|想喝|今天(?:想)?吃|今天(?:想)?喝|來點|來一份|要吃|要喝|改吃|改喝)/iu;
+const BARE_POSITIVE_PATTERN = /(?:^|[，,、；;\s])(?:吃|喝)\s*(?!太多|太飽|太饱|膩|腻|不下)/iu;
+const POSITIVE_PHRASE_PATTERN = /(?<!不)(?<!沒)(?<!没)(?:想吃|想喝|今天(?:想)?吃|今天(?:想)?喝|來點|來一份|要吃|要喝|改吃|改喝)\s*([^，,、。；;!?！？]+)/iu;
+const NON_FOOD_PHRASE_PATTERN = /^(?:熱的|熱食|暖和|清淡|清爽|新鮮|新鲜|健康|太油|油膩|油腻|太甜|甜一點|甜一些|太辣|辣一點|辣一些|安靜|安静|便宜|貴|贵|吃飽|吃饱|不太遠|不太远|近一點|近一点|能坐久一點|能坐久一点)$/iu;
+
+const PLACE_INTENT_RULES = Object.freeze([
+  { pattern: /吃冰|冰品|冰的|冰淇淋|剉冰|刨冰|雪花冰|冰店|聖代|圣代|霜淇淋|冰棒|gelato|ice\s*cream/iu, query: "冰品 冰淇淋 剉冰 甜點" },
+  { pattern: /牛排|steak/iu, query: "牛排" },
+  { pattern: /拉麵|拉面|ramen/iu, query: "拉麵" },
+  { pattern: /火鍋|火锅|鍋物|hot\s*pot/iu, query: "火鍋" },
+  { pattern: /燒肉|烧肉|烤肉|barbecue|bbq/iu, query: "燒肉" },
+  { pattern: /咖啡|coffee/iu, query: "咖啡" },
+  { pattern: /甜點|甜点|甜品|dessert/iu, query: "甜點" },
+]);
+
+function emptyPlaceSearchIntent() {
+  return { hasPositiveFoodIntent: false, query: "" };
+}
+
+export function derivePlaceSearchIntent(value = "") {
+  const currentNeed = cleanText(value, 240);
+  if (!currentNeed || GENERIC_NEED_PATTERN.test(currentNeed)) return emptyPlaceSearchIntent();
+
+  const hasExplicitPositive = EXPLICIT_POSITIVE_PATTERN.test(currentNeed);
+  if (FATIGUE_PATTERN.test(currentNeed) && !hasExplicitPositive) return emptyPlaceSearchIntent();
+
+  const hasPositiveCue = hasExplicitPositive || BARE_POSITIVE_PATTERN.test(currentNeed);
+  if (NEGATION_PATTERN.test(currentNeed) && !hasPositiveCue) return emptyPlaceSearchIntent();
+
+  const matchedQueries = PLACE_INTENT_RULES
+    .filter(({ pattern }) => pattern.test(currentNeed))
+    .map(({ query }) => query);
+  if (matchedQueries.length) {
+    return {
+      hasPositiveFoodIntent: true,
+      query: [...new Set(matchedQueries.join(" ").split(/\s+/u).filter(Boolean))].join(" "),
+    };
+  }
+
+  const phrase = currentNeed.match(POSITIVE_PHRASE_PATTERN)?.[1]
+    ?.replace(/(?:的|一點|一些)$/u, "")
+    .trim();
+  if (!phrase || NON_FOOD_PHRASE_PATTERN.test(phrase)) return emptyPlaceSearchIntent();
+  return { hasPositiveFoodIntent: true, query: phrase.slice(0, 80) };
+}
+
 const PRICE_LEVELS = Object.freeze({
   FREE: 0,
   INEXPENSIVE: 1,
@@ -64,8 +113,10 @@ export function buildSearchBounds(origin, radiusKm) {
   };
 }
 
-export function buildTextSearchRequest({ origin, radiusKm, mealKeyword, categoryKeyword, openNow }) {
-  const textQuery = [mealKeyword, categoryKeyword, "餐廳"].filter(Boolean).join(" ") || "附近餐廳";
+export function buildTextSearchRequest({ origin, radiusKm, mealKeyword, categoryKeyword, currentNeed = "", openNow }) {
+  const placeSearchIntent = derivePlaceSearchIntent(currentNeed);
+  const primaryQuery = placeSearchIntent.hasPositiveFoodIntent ? placeSearchIntent.query : mealKeyword;
+  const textQuery = [primaryQuery, categoryKeyword, placeSearchIntent.hasPositiveFoodIntent ? "" : "餐廳"].filter(Boolean).join(" ") || "附近餐廳";
   return {
     textQuery,
     fields: [...NEW_PLACE_SEARCH_FIELDS],

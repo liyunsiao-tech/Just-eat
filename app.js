@@ -7,7 +7,7 @@ import {
   sanitizeCandidates,
   toAiCandidate,
 } from "./src/decision.mjs";
-import { buildTextSearchRequest, normalizeNewPlace } from "./src/places.mjs";
+import { buildTextSearchRequest, derivePlaceSearchIntent, normalizeNewPlace } from "./src/places.mjs";
 import {
   compactInteraction,
   compactProfile,
@@ -259,7 +259,7 @@ async function ensureMapsScript() {
   return state.mapsScriptPromise;
 }
 
-async function queryGooglePlaces() {
+async function queryGooglePlaces(currentNeed) {
   await ensureMapsScript();
   const { Place } = await window.google.maps.importLibrary("places");
   if (typeof Place?.searchByText !== "function") throw new Error("places_new_api_unavailable");
@@ -269,6 +269,7 @@ async function queryGooglePlaces() {
     radiusKm,
     mealKeyword: MEAL_KEYWORDS[state.settings.meal] || MEAL_KEYWORDS.dinner,
     categoryKeyword: CATEGORY_KEYWORDS[state.settings.category],
+    currentNeed,
     openNow: state.settings.openNow,
   });
   const { places = [] } = await Place.searchByText(request);
@@ -277,23 +278,43 @@ async function queryGooglePlaces() {
     .filter((candidate) => candidate && candidate.distanceKm !== null && candidate.distanceKm <= radiusKm + 0.001);
 }
 
-async function loadCandidates() {
+async function loadCandidates(currentNeed) {
+  const placeSearchIntent = derivePlaceSearchIntent(currentNeed);
+  const noPositiveIntentCandidates = (status) => {
+    state.candidates = [];
+    state.source = "google";
+    setLocationStatus(status);
+    return state.candidates;
+  };
+
+  if (placeSearchIntent.hasPositiveFoodIntent && !state.config.mapsBrowserKey) {
+    return noPositiveIntentCandidates("需要 Places 才能搜尋這個明確需求；請先設定地圖服務");
+  }
+
   if (state.config.mapsBrowserKey) {
     if (!state.location) await requestLocation();
     if (state.location) {
       setLocationStatus("正在搜尋附近餐廳…");
       try {
-        const candidates = sanitizeCandidates(await queryGooglePlaces());
+        const candidates = sanitizeCandidates(await queryGooglePlaces(currentNeed));
         if (candidates.length) {
           state.candidates = candidates;
           state.source = "google";
           setLocationStatus(`找到 ${candidates.length} 間附近餐廳`);
           return candidates;
         }
+        if (placeSearchIntent.hasPositiveFoodIntent) {
+          return noPositiveIntentCandidates(`附近沒有找到符合「${currentNeed}」的店家`);
+        }
         setLocationStatus("附近沒有符合條件的餐廳；先用示範候選");
       } catch {
+        if (placeSearchIntent.hasPositiveFoodIntent) {
+          return noPositiveIntentCandidates(`目前無法取得符合「${currentNeed}」的附近店家`);
+        }
         setLocationStatus("Places 暫時無法使用；先用加權隨機示範候選");
       }
+    } else if (placeSearchIntent.hasPositiveFoodIntent) {
+      return noPositiveIntentCandidates(`需要定位才能搜尋符合「${currentNeed}」的附近店家`);
     }
   }
   state.candidates = sanitizeCandidates(DEMO_CANDIDATES);
@@ -676,12 +697,22 @@ async function decide({ reuseCandidates = false } = {}) {
   if (!reuseCandidates) state.seenIds.clear();
 
   try {
-    if (!reuseCandidates || !state.candidates.length) await loadCandidates();
+    if (!reuseCandidates || !state.candidates.length) await loadCandidates(currentNeed);
     const filtered = getDisplayedCandidates(currentNeed);
     if (!filtered.length) {
       state.current = null;
-      renderEmptyResult("目前沒有同時符合這些條件的候選");
-      setText(dom.resultReason, "保留當下需求優先；可以拿掉一個限制，或換個口味方向再試一次。");
+      const placeSearchIntent = derivePlaceSearchIntent(currentNeed);
+      renderEmptyResult(
+        placeSearchIntent.hasPositiveFoodIntent
+          ? `附近目前沒有符合「${currentNeed}」且符合目前條件的店家。`
+          : "目前沒有同時符合這些條件的候選",
+      );
+      setText(
+        dom.resultReason,
+        placeSearchIntent.hasPositiveFoodIntent
+          ? "可以放寬搜尋範圍、關閉「只找現在營業中」，或換個需求再試一次。"
+          : "保留當下需求優先；可以拿掉一個限制，或換個口味方向再試一次。",
+      );
       announce("目前沒有符合條件的候選");
       return;
     }
