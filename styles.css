@@ -84,16 +84,20 @@ input:focus-visible + .toggle-ui {
 }
 
 .brand {
-  color: var(--ink);
-  font-size: 30px;
-  font-weight: 800;
-  letter-spacing: -0.08em;
-  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  width: 172px;
+  max-width: 46vw;
+  min-width: 0;
+  flex: 0 1 172px;
   text-decoration: none;
 }
 
-.brand span {
-  color: var(--accent);
+.brand img {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-width: 100%;
 }
 
 .topbar-status {
@@ -1087,6 +1091,11 @@ select:focus {
   .topbar {
     align-items: flex-start;
     gap: 10px;
+  }
+
+  .brand {
+    width: 145px;
+    flex-basis: 145px;
   }
 
   .topbar-status {

@@ -1,4 +1,4 @@
-const CACHE_NAME = "eat-shell-v1";
+const CACHE_NAME = "eat-shell-v2";
 const SHELL = [
   "/",
   "/index.html",
@@ -8,6 +8,11 @@ const SHELL = [
   "/src/places.mjs",
   "/src/storage.mjs",
   "/manifest.webmanifest",
+  "/icons/brand-logo.png",
+  "/icons/favicon.png",
+  "/icons/apple-touch-icon.png",
+  "/icons/icon-192.png",
+  "/icons/icon-512.png",
   "/icons/icon.svg",
 ];
 
