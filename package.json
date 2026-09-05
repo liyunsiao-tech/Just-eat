@@ -1,0 +1,17 @@
+{
+  "name": "eat",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A local-first restaurant decision maker that learns your taste.",
+  "type": "module",
+  "scripts": {
+    "start": "node server.mjs",
+    "dev": "node --watch server.mjs",
+    "test": "node --test",
+    "security": "node scripts/secret-audit.mjs --staged",
+    "security:history": "node scripts/secret-audit.mjs --history"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

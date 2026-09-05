@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#1d251d" />
+    <meta name="description" content="越用越懂你的吃什麼決定器。" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="stylesheet" href="/styles.css" />
+    <title>eat · 幫你決定吃什麼</title>
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <a class="brand" href="/" aria-label="eat 首頁">eat<span aria-hidden="true">.</span></a>
+        <div class="topbar-status">
+          <span class="status-dot" aria-hidden="true"></span>
+          <span id="service-status">本機口味記憶已開啟</span>
+        </div>
+      </header>
+
+      <main>
+        <section class="intro" aria-labelledby="page-title">
+          <div>
+            <p class="eyebrow">YOUR NEXT BITE</p>
+            <h1 id="page-title">今天，吃什麼？<br /><em>交給更懂你的決定。</em></h1>
+          </div>
+          <p class="intro-copy">保留一點隨機，記住每一次選擇。說一句你現在的心情，eat 會從附近候選裡替你挑一間。</p>
+        </section>
+
+        <section class="workspace-grid" aria-label="吃什麼決定工作區">
+          <aside class="control-card card">
+            <div class="card-heading">
+              <div>
+                <p class="section-kicker">01 · SET THE MOOD</p>
+                <h2>先告訴我現在的你</h2>
+              </div>
+              <span class="heading-mark" aria-hidden="true">↗</span>
+            </div>
+
+            <form id="decision-form">
+              <label class="field-label" for="current-need">今天想吃什麼？<span>選填</span></label>
+              <textarea id="current-need" name="currentNeed" rows="3" maxlength="240" placeholder="例如：今天想吃熱的，不要麵"></textarea>
+              <p class="field-hint">一句話就好；當下明確需求會優先於長期口味。</p>
+
+              <div class="form-row">
+                <label class="field-label" for="meal">餐期</label>
+                <select id="meal" name="meal">
+                  <option value="breakfast">早餐</option>
+                  <option value="lunch">午餐</option>
+                  <option value="dinner" selected>晚餐</option>
+                  <option value="dessert">甜點</option>
+                  <option value="latenight">宵夜</option>
+                </select>
+              </div>
+
+              <div class="form-row">
+                <label class="field-label" for="radius">搜尋範圍</label>
+                <select id="radius" name="radiusKm">
+                  <option value="1">1 公里內</option>
+                  <option value="3" selected>3 公里內</option>
+                  <option value="5">5 公里內</option>
+                  <option value="10">10 公里內</option>
+                </select>
+              </div>
+
+              <div class="form-row">
+                <label class="field-label" for="price">預算</label>
+                <select id="price" name="price">
+                  <option value="all" selected>不限</option>
+                  <option value="cheap">$ · 輕鬆吃</option>
+                  <option value="moderate">$$ · 剛剛好</option>
+                  <option value="expensive">$$$ · 想吃好一點</option>
+                </select>
+              </div>
+
+              <div class="form-row">
+                <label class="field-label" for="min-rating">最低評分</label>
+                <select id="min-rating" name="minRating">
+                  <option value="0">不限</option>
+                  <option value="3.5">3.5 以上</option>
+                  <option value="4" selected>4.0 以上</option>
+                  <option value="4.3">4.3 以上</option>
+                  <option value="4.5">4.5 以上</option>
+                </select>
+              </div>
+
+              <fieldset class="filter-fieldset">
+                <legend class="field-label">口味方向</legend>
+                <div class="chip-list" role="group" aria-label="口味方向">
+                  <button class="chip is-active" type="button" data-category="all" aria-pressed="true">不限</button>
+                  <button class="chip" type="button" data-category="taiwanese" aria-pressed="false">台式</button>
+                  <button class="chip" type="button" data-category="japanese" aria-pressed="false">日式</button>
+                  <button class="chip" type="button" data-category="korean" aria-pressed="false">韓式</button>
+                  <button class="chip" type="button" data-category="italian" aria-pressed="false">義式</button>
+                  <button class="chip" type="button" data-category="cafe" aria-pressed="false">咖啡甜點</button>
+                </div>
+              </fieldset>
+
+              <label class="toggle-row" for="open-now">
+                <span>
+                  <strong>只找現在營業中</strong>
+                  <small>Google Places 會即時篩選</small>
+                </span>
+                <input id="open-now" type="checkbox" checked />
+                <span class="toggle-ui" aria-hidden="true"></span>
+              </label>
+
+              <label class="toggle-row compact-toggle" for="exclude-chains">
+                <span>
+                  <strong>避開常見連鎖</strong>
+                  <small>保留一點發現新店的空間</small>
+                </span>
+                <input id="exclude-chains" type="checkbox" />
+                <span class="toggle-ui" aria-hidden="true"></span>
+              </label>
+
+              <div class="location-row">
+                <div class="location-copy">
+                  <span class="location-icon" aria-hidden="true">⌖</span>
+                  <span id="location-status">尚未取得位置；會先用示範候選</span>
+                </div>
+                <button class="text-button" id="use-location" type="button">允許定位</button>
+              </div>
+
+              <button class="primary-button" id="decide-button" type="submit">
+                <span>幫我決定</span>
+                <span class="button-arrow" aria-hidden="true">↗</span>
+              </button>
+              <p class="privacy-note"><span aria-hidden="true">⌁</span> 選擇與口味輪廓只保存在這台裝置的 localStorage。</p>
+            </form>
+          </aside>
+
+          <div class="result-column">
+            <article class="result-card card is-empty" id="result-panel" aria-live="polite">
+              <div class="result-topline">
+                <span class="result-kicker" id="result-kicker">READY WHEN YOU ARE</span>
+                <span class="result-mode" id="result-mode">等待決定</span>
+              </div>
+              <div class="result-main">
+                <div class="result-orbit" aria-hidden="true"><span>✦</span></div>
+                <div class="result-copy">
+                  <p class="result-overline" id="result-overline">你的下一站</p>
+                  <h2 id="result-title">讓今天的第一口，<br /><em>先不用自己想。</em></h2>
+                  <p class="result-meta" id="result-meta">設定條件後按下「幫我決定」</p>
+                  <p class="result-reason" id="result-reason">你可以不輸入任何需求；原本的加權隨機流程隨時都能工作。</p>
+                </div>
+              </div>
+              <div class="result-footer" id="result-footer" hidden>
+                <span id="result-source"></span>
+                <a id="result-link" href="#" target="_blank" rel="noopener noreferrer">在 Google Maps 開啟 ↗</a>
+              </div>
+              <details class="candidate-details" id="candidate-details" hidden>
+                <summary>查看本輪候選</summary>
+                <div id="candidate-list"></div>
+              </details>
+              <div class="result-actions" id="result-actions" hidden>
+                <button class="secondary-button" type="button" data-action="rerolled">換一家</button>
+                <button class="icon-button" type="button" data-action="favorited" aria-label="收藏這家餐廳" title="收藏">♡</button>
+                <button class="icon-button danger" type="button" data-action="blacklisted" aria-label="不想再看到這類餐廳" title="不想吃這類">×</button>
+                <button class="primary-button compact" type="button" data-action="accepted">就吃這家 <span aria-hidden="true">→</span></button>
+              </div>
+            </article>
+
+            <section class="profile-card card" aria-labelledby="profile-title">
+              <div class="profile-heading">
+                <div>
+                  <p class="section-kicker">02 · TASTE PROFILE</p>
+                  <h2 id="profile-title">你的口味輪廓</h2>
+                </div>
+                <div class="profile-count" id="interaction-count">0 次選擇</div>
+              </div>
+              <div class="profile-content">
+                <div class="taste-bars" id="taste-bars">
+                  <p class="profile-empty">多選幾次，這裡會開始認識你。</p>
+                </div>
+                <div class="recent-panel">
+                  <div class="recent-heading"><span>最近足跡</span><span id="profile-signal">等待第一個訊號</span></div>
+                  <ul class="recent-list" id="recent-list">
+                    <li class="recent-empty">接受、換一家、收藏或封鎖，都是訊號。</li>
+                  </ul>
+                </div>
+              </div>
+            </section>
+          </div>
+        </section>
+
+        <section class="bottom-note" aria-label="產品說明">
+          <span class="bottom-line" aria-hidden="true"></span>
+          <p><strong>越用越懂</strong>　每一次「吃這家」或「換一家」，都會讓下一次更接近你。</p>
+          <span class="bottom-line" aria-hidden="true"></span>
+        </section>
+      </main>
+    </div>
+
+    <div class="sr-only" id="live-region" aria-live="assertive"></div>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

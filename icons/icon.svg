@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="128" fill="#1d251d"/>
+  <circle cx="385" cy="126" r="54" fill="#f2ca5b"/>
+  <text x="256" y="330" fill="#fffefa" font-family="Arial, sans-serif" font-size="210" font-weight="700" text-anchor="middle">eat</text>
+  <circle cx="420" cy="360" r="22" fill="#ed7445"/>
+</svg>

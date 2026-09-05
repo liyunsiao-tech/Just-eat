@@ -1,0 +1,19 @@
+{
+  "name": "eat · 幫你決定吃什麼",
+  "short_name": "eat",
+  "lang": "zh-Hant",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f7f7f2",
+  "theme_color": "#1d251d",
+  "description": "保留一點隨機，記住每一次選擇。",
+  "icons": [
+    {
+      "src": "/icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

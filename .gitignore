@@ -1,0 +1,17 @@
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+
+# Runtime and tooling output
+node_modules/
+coverage/
+.DS_Store
+*.log
+.netlify/
+.wrangler/
+
+# Local-only exports or test data
+data/
+tmp/
+screenshots/
