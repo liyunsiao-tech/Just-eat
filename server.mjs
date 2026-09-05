@@ -230,7 +230,7 @@ async function requestAiSelection(input, config) {
       body: JSON.stringify({
         model: config.model,
         temperature: 0.1,
-        max_tokens: 180,
+        max_tokens: 768,
         messages: [
           { role: "system", content: SYSTEM_PROMPT },
           { role: "user", content: JSON.stringify(promptPayload(input)) },
