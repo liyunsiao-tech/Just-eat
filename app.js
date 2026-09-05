@@ -239,6 +239,13 @@ function distanceInKm(left, right) {
 }
 
 function normalizeGooglePlace(place) {
+  const placeLocation = place.geometry?.location;
+  const placeLat = typeof placeLocation?.lat === "function" ? placeLocation.lat() : placeLocation?.lat;
+  const placeLng = typeof placeLocation?.lng === "function" ? placeLocation.lng() : placeLocation?.lng;
+  const hasDestination = Number.isFinite(Number(placeLat)) && Number.isFinite(Number(placeLng));
+  const mapsUrl = state.location && hasDestination
+    ? `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(`${state.location.lat},${state.location.lng}`)}&destination=${encodeURIComponent(`${placeLat},${placeLng}`)}&destination_place_id=${encodeURIComponent(place.place_id || "")}`
+    : `https://www.google.com/maps/search/?api=1&query=Google&query_place_id=${encodeURIComponent(place.place_id || "")}`;
   const candidate = sanitizeCandidate({
     placeId: place.place_id,
     name: place.name,
@@ -250,11 +257,11 @@ function normalizeGooglePlace(place) {
     categories: place.types,
     tags: deriveTags({ name: place.name, types: place.types }),
     source: "google",
-    mapsUrl: `https://www.google.com/maps/search/?api=1&query=Google&query_place_id=${encodeURIComponent(place.place_id || "")}`,
+    mapsUrl,
     distanceKm: state.location && place.geometry?.location
       ? distanceInKm(state.location, {
-        lat: typeof place.geometry.location.lat === "function" ? place.geometry.location.lat() : place.geometry.location.lat,
-        lng: typeof place.geometry.location.lng === "function" ? place.geometry.location.lng() : place.geometry.location.lng,
+        lat: placeLat,
+        lng: placeLng,
       })
       : null,
   });
