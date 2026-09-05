@@ -8,6 +8,7 @@ export const STORAGE_KEYS = Object.freeze({
 
 const MAX_INTERACTIONS = 200;
 const ACTION_SCORES = Object.freeze({
+  shown: 0,
   accepted: 1,
   rerolled: -0.5,
   favorited: 3,

@@ -10,6 +10,7 @@ import {
 import {
   compactInteraction,
   compactProfile,
+  clearLocalTasteData,
   getInteractions,
   getSettings,
   getTasteProfile,
@@ -85,6 +86,8 @@ const dom = {
   interactionCount: document.querySelector("#interaction-count"),
   profileSignal: document.querySelector("#profile-signal"),
   recentList: document.querySelector("#recent-list"),
+  historyList: document.querySelector("#history-list"),
+  clearMemory: document.querySelector("#clear-memory"),
   liveRegion: document.querySelector("#live-region"),
 };
 
@@ -101,6 +104,7 @@ const state = {
 };
 
 const actionLabels = Object.freeze({
+  shown: "看見",
   accepted: "吃這家",
   rerolled: "換一家",
   favorited: "收藏",
@@ -465,19 +469,25 @@ function renderTasteProfile() {
 
   const avoidCount = Array.isArray(profile.avoidPreferences) ? profile.avoidPreferences.length : 0;
   setText(dom.profileSignal, interactions.length ? (avoidCount ? `${avoidCount} 個避開訊號` : "輪廓正在成形") : "等待第一個訊號");
-  dom.recentList.replaceChildren();
   const recent = interactions.slice(-4).reverse();
-  if (!recent.length) {
+  renderInteractionList(dom.recentList, recent, "看見、接受、換一家、收藏或封鎖，都是訊號。");
+  renderInteractionList(dom.historyList, interactions.slice().reverse(), "目前還沒有互動紀錄。");
+}
+
+function renderInteractionList(listElement, interactions, emptyText) {
+  if (!listElement) return;
+  listElement.replaceChildren();
+  if (!interactions.length) {
     const empty = document.createElement("li");
     empty.className = "recent-empty";
-    empty.textContent = "接受、換一家、收藏或封鎖，都是訊號。";
-    dom.recentList.append(empty);
-  } else {
-    for (const interaction of recent) {
-      const item = document.createElement("li");
-      item.textContent = `${actionLabels[interaction.action] || interaction.action} · ${interaction.placeName}`;
-      dom.recentList.append(item);
-    }
+    empty.textContent = emptyText;
+    listElement.append(empty);
+    return;
+  }
+  for (const interaction of interactions) {
+    const item = document.createElement("li");
+    item.textContent = `${actionLabels[interaction.action] || interaction.action} · ${interaction.placeName}`;
+    listElement.append(item);
   }
 }
 
@@ -571,6 +581,7 @@ async function decide({ reuseCandidates = false } = {}) {
     }
     state.current = selected;
     state.seenIds.add(selected.placeId);
+    recordCurrentAction("shown");
     renderResult(selected, mode, reason);
   } finally {
     setBusy(false);
@@ -630,6 +641,12 @@ function wireEvents() {
   dom.resultActions.addEventListener("click", (event) => {
     const button = event.target.closest("button[data-action]");
     if (button) handleResultAction(button.dataset.action);
+  });
+  dom.clearMemory.addEventListener("click", () => {
+    if (!clearLocalTasteData()) return;
+    state.seenIds.clear();
+    renderTasteProfile();
+    announce("已清除互動與口味輪廓");
   });
   [dom.meal, dom.radius, dom.price, dom.minRating, dom.openNow, dom.excludeChains].forEach((control) => {
     control.addEventListener("change", () => { state.settings = readSettingsFromForm(); });

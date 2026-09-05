@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   buildTasteProfile,
+  clearLocalTasteData,
   getInteractions,
   getTasteProfile,
   saveInteraction,
@@ -35,4 +36,20 @@ test("profile 可由純事件重建，且會保留封鎖訊號", () => {
   ]);
   assert.equal(profile.actionCounts.blacklisted, 1);
   assert.equal(profile.tagWeights.spicy, -4);
+});
+
+test("shown 是可追蹤但不會產生偏好分數的事件", () => {
+  const storage = new MemoryStorage();
+  saveInteraction({ action: "shown", placeId: "demo-a", placeName: "熱飯小館", tags: ["rice"] }, storage);
+  const profile = getTasteProfile(storage);
+  assert.equal(profile.actionCounts.shown, 1);
+  assert.equal(profile.tagWeights.rice, 0);
+});
+
+test("清除學習紀錄會同時移除 interactions 與 Taste Profile", () => {
+  const storage = new MemoryStorage();
+  saveInteraction({ action: "accepted", placeId: "demo-a", placeName: "熱飯小館" }, storage);
+  assert.equal(clearLocalTasteData(storage), true);
+  assert.deepEqual(getInteractions(storage), []);
+  assert.equal(getTasteProfile(storage).interactionCount, 0);
 });

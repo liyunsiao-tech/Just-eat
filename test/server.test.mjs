@@ -21,12 +21,14 @@ test("OpenAI-compatible AI 成功時只能選候選清單中的項目", async ()
     model: process.env.AI_MODEL,
     apiKey: process.env.AI_API_KEY,
   };
+  let capturedPrompt;
   const provider = http.createServer((request, response) => {
     const chunks = [];
     request.on("data", (chunk) => chunks.push(chunk));
     request.on("end", () => {
       const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
       const prompt = JSON.parse(body.messages[1].content);
+      capturedPrompt = prompt;
       const placeId = prompt.candidates[0].placeId;
       response.writeHead(200, { "content-type": "application/json" });
       response.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ placeId, reason: "符合當下需求的候選。" }) } }] }));
@@ -40,6 +42,8 @@ test("OpenAI-compatible AI 成功時只能選候選清單中的項目", async ()
     const result = await recommend({
       currentNeed: "不要麵",
       settings: { minRating: 0, price: "all" },
+      tasteProfile: { interactionCount: 2, tagWeights: { hot: 3 }, categoryWeights: { 台式: 2 } },
+      recentInteractions: [{ action: "accepted", placeId: "p-old", placeName: "之前吃過", tags: ["hot"] }],
       candidates: [
         { placeId: "p-rice", name: "熱飯小館", tags: ["rice", "hot"], rating: 4.2, source: "google" },
         { placeId: "p-noodle", name: "拉麵小屋", tags: ["noodles", "hot"], rating: 4.9, source: "google" },
@@ -48,12 +52,75 @@ test("OpenAI-compatible AI 成功時只能選候選清單中的項目", async ()
     assert.equal(result.status, 200);
     assert.equal(result.body.mode, "ai");
     assert.equal(result.body.placeId, "p-rice");
+    assert.equal(capturedPrompt.currentNeed, "不要麵");
+    assert.equal(capturedPrompt.tasteProfile.interactionCount, 2);
+    assert.equal(capturedPrompt.recentInteractions[0].action, "accepted");
+    assert.equal(capturedPrompt.candidates.some((candidate) => candidate.placeId === "p-noodle"), false);
   } finally {
     await new Promise((resolve) => provider.close(resolve));
     if (previous.baseUrl === undefined) delete process.env.AI_BASE_URL; else process.env.AI_BASE_URL = previous.baseUrl;
     if (previous.model === undefined) delete process.env.AI_MODEL; else process.env.AI_MODEL = previous.model;
     if (previous.apiKey === undefined) delete process.env.AI_API_KEY; else process.env.AI_API_KEY = previous.apiKey;
   }
+});
+
+async function withProvider(handler, callback) {
+  const previous = { baseUrl: process.env.AI_BASE_URL, model: process.env.AI_MODEL, apiKey: process.env.AI_API_KEY, timeout: process.env.AI_TIMEOUT_MS };
+  const provider = http.createServer(handler);
+  await new Promise((resolve) => provider.listen(0, "127.0.0.1", resolve));
+  process.env.AI_BASE_URL = `http://127.0.0.1:${provider.address().port}/v1`;
+  process.env.AI_MODEL = "mock-fallback-model";
+  process.env.AI_API_KEY = "";
+  try {
+    return await callback();
+  } finally {
+    await new Promise((resolve) => provider.close(resolve));
+    if (previous.baseUrl === undefined) delete process.env.AI_BASE_URL; else process.env.AI_BASE_URL = previous.baseUrl;
+    if (previous.model === undefined) delete process.env.AI_MODEL; else process.env.AI_MODEL = previous.model;
+    if (previous.apiKey === undefined) delete process.env.AI_API_KEY; else process.env.AI_API_KEY = previous.apiKey;
+    if (previous.timeout === undefined) delete process.env.AI_TIMEOUT_MS; else process.env.AI_TIMEOUT_MS = previous.timeout;
+  }
+}
+
+const fallbackPayload = {
+  currentNeed: "不要麵",
+  settings: { minRating: 0, price: "all" },
+  candidates: [
+    { placeId: "p-rice", name: "熱飯小館", tags: ["rice"], rating: 4.2, source: "google" },
+    { placeId: "p-noodle", name: "拉麵小屋", tags: ["noodles"], rating: 4.9, source: "google" },
+  ],
+};
+
+test("AI endpoint error 會回到 weighted random", async () => {
+  const result = await withProvider((request, response) => {
+    request.resume();
+    request.on("end", () => {
+      response.writeHead(503, { "content-type": "application/json" });
+      response.end(JSON.stringify({ error: "temporarily_unavailable" }));
+    });
+  }, () => recommend(fallbackPayload));
+  assert.equal(result.body.mode, "fallback");
+  assert.equal(result.body.placeId, "p-rice");
+});
+
+test("AI invalid JSON 與 timeout 都不會阻斷 weighted random", async () => {
+  const invalidJson = await withProvider((request, response) => {
+    request.resume();
+    request.on("end", () => {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ choices: [{ message: { content: "not-json" } }] }));
+    });
+  }, () => recommend(fallbackPayload));
+  assert.equal(invalidJson.body.mode, "fallback");
+
+  const timeoutResult = await withProvider((request) => {
+    request.on("error", () => {});
+  }, () => {
+    process.env.AI_TIMEOUT_MS = "2500";
+    return recommend(fallbackPayload);
+  });
+  assert.equal(timeoutResult.body.mode, "fallback");
+  assert.equal(timeoutResult.body.placeId, "p-rice");
 });
 
 test("AI 格式錯誤或未知 placeId 會回到 weighted random", async () => {

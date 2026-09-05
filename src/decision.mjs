@@ -1,6 +1,7 @@
 const MAX_TEXT_LENGTH = 240;
 
 export const ACTIONS = Object.freeze([
+  "shown",
   "accepted",
   "rerolled",
   "favorited",
@@ -43,6 +44,11 @@ const CATEGORY_RULES = Object.freeze([
 ]);
 
 const NEED_PATTERNS = Object.freeze([
+  {
+    tag: "rice",
+    pattern:
+      /(?:不要|不吃|不想吃|避開|排除|別給我|不用).{0,12}(?:飯|米飯|丼|便當|rice)/iu,
+  },
   {
     tag: "noodles",
     pattern:

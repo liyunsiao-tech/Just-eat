@@ -727,6 +727,12 @@ select:focus {
   font-weight: 700;
 }
 
+.profile-heading-actions {
+  display: grid;
+  justify-items: end;
+  gap: 7px;
+}
+
 .profile-content {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -838,6 +844,26 @@ select:focus {
 
 .recent-empty::before {
   display: none;
+}
+
+.history-details {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.history-details summary {
+  color: var(--accent-dark);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.history-list {
+  max-height: 220px;
+  margin-top: 14px;
+  overflow-y: auto;
+  padding-right: 4px;
 }
 
 .bottom-note {

@@ -21,6 +21,12 @@ test("當下的不要麵需求會排除麵食候選", () => {
   assert.deepEqual(filterCandidatesByNeed(candidates, "今天想吃熱的，不要麵").map((item) => item.placeId), ["p-rice", "p-salad"]);
 });
 
+test("當下的不要飯需求會排除飯食候選", () => {
+  const constraints = extractNeedConstraints("今天想吃熱的，不想吃飯");
+  assert.deepEqual(constraints.blockedTags, ["rice"]);
+  assert.deepEqual(filterCandidatesByNeed(candidates, "今天想吃熱的，不想吃飯").map((item) => item.placeId), ["p-noodle", "p-salad"]);
+});
+
 test("AI 或其他輸入不能讓 weighted random 選到被明確排除的候選", () => {
   const selected = pickWeighted(candidates, {
     currentNeed: "不要麵",

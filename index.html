@@ -168,7 +168,10 @@
                   <p class="section-kicker">02 · TASTE PROFILE</p>
                   <h2 id="profile-title">你的口味輪廓</h2>
                 </div>
-                <div class="profile-count" id="interaction-count">0 次選擇</div>
+                <div class="profile-heading-actions">
+                  <div class="profile-count" id="interaction-count">0 次選擇</div>
+                  <button class="text-button" id="clear-memory" type="button">清除學習紀錄</button>
+                </div>
               </div>
               <div class="profile-content">
                 <div class="taste-bars" id="taste-bars">
@@ -177,10 +180,14 @@
                 <div class="recent-panel">
                   <div class="recent-heading"><span>最近足跡</span><span id="profile-signal">等待第一個訊號</span></div>
                   <ul class="recent-list" id="recent-list">
-                    <li class="recent-empty">接受、換一家、收藏或封鎖，都是訊號。</li>
+                    <li class="recent-empty">看見、接受、換一家、收藏或封鎖，都是訊號。</li>
                   </ul>
                 </div>
               </div>
+              <details class="history-details" id="history-details">
+                <summary>查看完整互動紀錄</summary>
+                <ul class="recent-list history-list" id="history-list"></ul>
+              </details>
             </section>
           </div>
         </section>

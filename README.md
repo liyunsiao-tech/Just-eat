@@ -2,7 +2,7 @@
 
 `eat` 是一個 local-first 的吃什麼決定器：保留原本「從附近候選中直接幫我決定一家」的低摩擦流程，再用當下的一句話、每次選擇與本機 Taste Profile 讓決定逐漸更像你。
 
-本專案是獨立的新 repository，使用乾淨 Git history；不以 submodule、symlink 或工作樹方式修改任何原始 `roulette-eater` repository。原始 repository 未隨本工作區提供，因此這裡依照既有產品契約，以 HTML、CSS、Vanilla JavaScript、PWA、Google Places 與 weighted random 的最小架構完成安全延伸。
+本專案是獨立的新 repository，使用乾淨 Git history；不以 submodule、symlink 或工作樹方式修改任何原始 `roulette-eater` repository。驗收時以唯讀方式核對原始功能，並以 HTML、CSS、Vanilla JavaScript、PWA、Google Places 與 weighted random 的最小架構完成安全延伸。
 
 ## 核心流程
 
@@ -11,7 +11,7 @@
 3. 允許瀏覽器定位後，使用 Google Places 取得附近真實餐廳候選。
 4. 若 AI 可用，server-side proxy 將當下需求、設定、Taste Profile、近期行為與候選清單送到 OpenAI-compatible chat completion endpoint。
 5. AI 只能回傳候選清單裡的 `placeId`；格式錯誤、未知 ID、timeout、HTTP 錯誤或未設定 AI 時，自動回到原本 weighted random。
-6. 「吃這家」「換一家」「收藏」「不想吃這類」會寫入本機 interactions，並重算 Taste Profile。
+6. 每次候選呈現（`shown`）以及「吃這家」「換一家」「收藏」「不想吃這類」都會寫入本機 interactions，並重算 Taste Profile；`shown` 不會單獨增加或降低偏好分數。
 
 沒有 Google key 或沒有定位權限時，App 會明確顯示「示範候選」並仍可測試基本決定流程；示範資料不會冒充附近真實餐廳，也不會送進 AI 個人化流程。
 
