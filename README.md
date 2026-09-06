@@ -101,7 +101,7 @@ npm run security:history  # 對 Git history 掃描
 ## 作品展示
 
 - 作品展示網址（選填）：尚未提供
-- 評選影片：製作中
+- 評選影片：[觀看 YouTube 影片](https://youtu.be/q91Sip1U9WY)
 
 ## 限制與未來工作
 
